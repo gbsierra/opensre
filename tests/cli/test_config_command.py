@@ -103,6 +103,19 @@ def test_config_set_malformed_file_preserves_contents(monkeypatch, tmp_path: Pat
     assert config_path.read_text(encoding="utf-8") == original_text
 
 
+def test_config_show_handles_empty_file(monkeypatch, tmp_path: Path) -> None:
+    opensre_home = _patch_config_home(monkeypatch, tmp_path)
+    config_path = opensre_home / "config.yml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["config", "show"])
+
+    assert result.exit_code == 0
+    assert result.output.strip() == "{}"
+
+
 def test_config_set_unknown_key_returns_helpful_error(monkeypatch, tmp_path: Path) -> None:
     _patch_config_home(monkeypatch, tmp_path)
     runner = CliRunner()

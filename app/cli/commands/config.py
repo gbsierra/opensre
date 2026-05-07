@@ -32,6 +32,9 @@ def _load_config() -> dict[str, Any]:
             f"Could not parse local config file at {path}: {exc}"
         ) from exc
 
+    if data is None:
+        return {}
+
     if not isinstance(data, dict):
         raise click.ClickException(
             f"Invalid config file at {path}: expected a mapping at the top level."
