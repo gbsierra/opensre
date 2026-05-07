@@ -242,6 +242,12 @@ def test_openai_retry_message_is_provider_aware(monkeypatch) -> None:
     assert sleep_calls == [1.0, 2.0]
 
 
+def test_openai_retry_error_formatter_rate_limit_without_status_code() -> None:
+    err = _build_named_error("RateLimitError")
+    message = llm_client._format_openai_retry_error(err, "Openai")
+    assert message == "Openai API is rate-limited after multiple retries. Try again in a few seconds."
+
+
 @pytest.mark.parametrize(
     ("error_name", "status_code", "expected"),
     [
@@ -250,7 +256,7 @@ def test_openai_retry_message_is_provider_aware(monkeypatch) -> None:
         ("TimeoutError", None, True),
         ("RateLimitError", None, True),
         ("APIStatusError", 408, True),
-        ("APIStatusError", 409, True),
+        ("APIStatusError", 409, False),
         ("APIStatusError", 425, True),
         ("APIStatusError", 429, True),
         ("APIStatusError", 503, True),

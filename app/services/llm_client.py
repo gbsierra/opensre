@@ -237,9 +237,9 @@ def _is_openai_retriable_error(err: Exception) -> bool:
     if isinstance(status_code, int):
         if status_code >= 500:
             return True
-        if status_code in {408, 409, 425, 429}:
+        if status_code in {408, 425, 429}:
             return True
-        if status_code in {400, 401, 403, 404, 422}:
+        if status_code in {400, 401, 403, 404, 409, 422}:
             return False
     if error_name in {"APIConnectionError", "APITimeoutError", "TimeoutError", "RateLimitError"}:
         return True
@@ -278,9 +278,14 @@ def _format_openai_retry_error(err: Exception, provider_label: str) -> str:
             f"{provider_label} API connection failed after multiple retries. "
             "Check network access and try again."
         )
-    if error_name == "RateLimitError" or status_code == 429:
+    if status_code == 429:
         return (
             f"{provider_label} API is rate-limited (HTTP 429) after multiple retries. "
+            "Try again in a few seconds."
+        )
+    if error_name == "RateLimitError":
+        return (
+            f"{provider_label} API is rate-limited after multiple retries. "
             "Try again in a few seconds."
         )
     if isinstance(status_code, int) and status_code >= 500:
