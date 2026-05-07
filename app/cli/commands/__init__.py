@@ -5,6 +5,7 @@ from __future__ import annotations
 import click
 
 from app.cli.commands.agent import agent_command
+from app.cli.commands.config import config_command
 from app.cli.commands.deploy import deploy
 from app.cli.commands.doctor import doctor_command
 from app.cli.commands.general import (
@@ -22,6 +23,7 @@ from app.cli.commands.tests import tests
 
 _COMMANDS: tuple[click.Command, ...] = (
     agent_command,
+    config_command,
     onboard,
     investigate_command,
     deploy,
