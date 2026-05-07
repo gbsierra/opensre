@@ -234,7 +234,14 @@ def _is_openai_retriable_error(err: Exception) -> bool:
     """Classify OpenAI-family errors that are safe to retry."""
     error_name = type(err).__name__
     status_code = getattr(err, "status_code", None)
-    if error_name in {"APIConnectionError", "APITimeoutError", "TimeoutError"}:
+    if isinstance(status_code, int):
+        if status_code >= 500:
+            return True
+        if status_code in {408, 409, 425, 429}:
+            return True
+        if status_code in {400, 401, 403, 404, 422}:
+            return False
+    if error_name in {"APIConnectionError", "APITimeoutError", "TimeoutError", "RateLimitError"}:
         return True
     if error_name in {
         "BadRequestError",
@@ -244,15 +251,6 @@ def _is_openai_retriable_error(err: Exception) -> bool:
         "UnprocessableEntityError",
     }:
         return False
-    if error_name == "RateLimitError":
-        return True
-    if isinstance(status_code, int):
-        if status_code >= 500:
-            return True
-        if status_code in {408, 409, 425, 429}:
-            return True
-        if status_code in {400, 401, 403, 404, 422}:
-            return False
     return False
 
 

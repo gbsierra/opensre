@@ -133,10 +133,18 @@ class _OpenAIRateLimitError(Exception):
         self.status_code = 429
 
 
-class _OpenAIStatus503Error(Exception):
+class _OpenAIServiceUnavailableError(Exception):
     def __init__(self, message: str = "server unavailable") -> None:
         super().__init__(message)
         self.status_code = 503
+
+
+def _build_named_error(name: str, *, status_code: int | None = None) -> Exception:
+    cls = type(name, (Exception,), {})
+    err = cls(name)
+    if status_code is not None:
+        err.status_code = status_code
+    return err
 
 
 def _build_openai_client_for_errors(
@@ -214,7 +222,7 @@ def test_openai_retries_rate_limit_and_surfaces_actionable_message(monkeypatch) 
 def test_openai_retry_message_is_provider_aware(monkeypatch) -> None:
     client, completions = _build_openai_client_for_errors(
         monkeypatch,
-        _OpenAIStatus503Error,
+        _OpenAIServiceUnavailableError,
         api_key_env="MINIMAX_API_KEY",
     )
     sleep_calls: list[float] = []
@@ -229,6 +237,60 @@ def test_openai_retry_message_is_provider_aware(monkeypatch) -> None:
     ) as exc_info:
         client.invoke("hello")
 
-    assert isinstance(exc_info.value.__cause__, _OpenAIStatus503Error)
+    assert isinstance(exc_info.value.__cause__, _OpenAIServiceUnavailableError)
     assert completions.call_count == 3
     assert sleep_calls == [1.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    ("error_name", "status_code", "expected"),
+    [
+        ("APIConnectionError", None, True),
+        ("APITimeoutError", None, True),
+        ("TimeoutError", None, True),
+        ("RateLimitError", None, True),
+        ("APIStatusError", 408, True),
+        ("APIStatusError", 409, True),
+        ("APIStatusError", 425, True),
+        ("APIStatusError", 429, True),
+        ("APIStatusError", 503, True),
+        ("BadRequestError", None, False),
+        ("AuthenticationError", None, False),
+        ("PermissionDeniedError", None, False),
+        ("NotFoundError", None, False),
+        ("UnprocessableEntityError", None, False),
+        ("APIStatusError", 400, False),
+        ("APIStatusError", 422, False),
+        ("UnknownError", None, False),
+    ],
+)
+def test_openai_retry_classification_coverage(error_name: str, status_code: int | None, expected: bool) -> None:
+    err = _build_named_error(error_name, status_code=status_code)
+    assert llm_client._is_openai_retriable_error(err) is expected
+
+
+def test_openai_non_retriable_error_formatter_fallback_without_status_code() -> None:
+    err = _build_named_error("WeirdError")
+    message = llm_client._format_openai_non_retriable_error(err, "Openai")
+    assert (
+        message
+        == "Openai API request failed (WeirdError). Check model name, request parameters, and credentials."
+    )
+
+
+def test_openai_retry_error_formatter_connection_branch() -> None:
+    err = _build_named_error("APIConnectionError")
+    message = llm_client._format_openai_retry_error(err, "Openai")
+    assert message == "Openai API connection failed after multiple retries. Check network access and try again."
+
+
+def test_openai_retry_error_formatter_generic_http_branch() -> None:
+    err = _build_named_error("TeapotError", status_code=418)
+    message = llm_client._format_openai_retry_error(err, "Openai")
+    assert message == "Openai API request failed after multiple retries (HTTP 418: TeapotError)."
+
+
+def test_openai_retry_error_formatter_final_fallback_branch() -> None:
+    err = _build_named_error("OddError")
+    message = llm_client._format_openai_retry_error(err, "Openai")
+    assert message == "Openai API request failed after multiple retries: OddError."
