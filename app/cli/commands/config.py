@@ -27,11 +27,15 @@ def _load_config() -> dict[str, Any]:
         import yaml  # type: ignore[import-untyped]
 
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return {}
+    except Exception as exc:  # noqa: BLE001
+        raise click.ClickException(
+            f"Could not parse local config file at {path}: {exc}"
+        ) from exc
 
     if not isinstance(data, dict):
-        return {}
+        raise click.ClickException(
+            f"Invalid config file at {path}: expected a mapping at the top level."
+        )
     return data
 
 
@@ -83,12 +87,10 @@ def config_command() -> None:
 
 @config_command.command(name="show")
 def config_show() -> None:
-    """Show resolved interactive config values."""
-    from app.cli.interactive_shell.config import ReplConfig
+    """Show local config values from ~/.opensre/config.yml."""
     from app.cli.support.context import is_json_output
 
-    resolved = ReplConfig.load()
-    payload = {"interactive": {"enabled": resolved.enabled, "layout": resolved.layout}}
+    payload = _load_config()
 
     if is_json_output():
         click.echo(json.dumps(payload))
