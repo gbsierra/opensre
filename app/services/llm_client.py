@@ -230,6 +230,74 @@ def _format_anthropic_retry_error(err: Exception) -> str:
     return f"Anthropic API request failed after multiple retries: {error_name}."
 
 
+def _is_openai_retriable_error(err: Exception) -> bool:
+    """Classify OpenAI-family errors that are safe to retry."""
+    error_name = type(err).__name__
+    status_code = getattr(err, "status_code", None)
+    if error_name in {"APIConnectionError", "APITimeoutError", "TimeoutError"}:
+        return True
+    if error_name in {
+        "BadRequestError",
+        "AuthenticationError",
+        "PermissionDeniedError",
+        "NotFoundError",
+        "UnprocessableEntityError",
+    }:
+        return False
+    if error_name == "RateLimitError":
+        return True
+    if isinstance(status_code, int):
+        if status_code >= 500:
+            return True
+        if status_code in {408, 409, 425, 429}:
+            return True
+        if status_code in {400, 401, 403, 404, 422}:
+            return False
+    return False
+
+
+def _format_openai_non_retriable_error(err: Exception, provider_label: str) -> str:
+    """Format user-facing OpenAI-family errors that should fail fast."""
+    error_name = type(err).__name__
+    status_code = getattr(err, "status_code", None)
+    if isinstance(status_code, int):
+        return (
+            f"{provider_label} API request failed (HTTP {status_code}: {error_name}). "
+            "Check model name, request parameters, and credentials."
+        )
+    return (
+        f"{provider_label} API request failed ({error_name}). "
+        "Check model name, request parameters, and credentials."
+    )
+
+
+def _format_openai_retry_error(err: Exception, provider_label: str) -> str:
+    """Format user-facing OpenAI-family retry failure messages."""
+    error_name = type(err).__name__
+    status_code = getattr(err, "status_code", None)
+    if error_name == "APIConnectionError":
+        return (
+            f"{provider_label} API connection failed after multiple retries. "
+            "Check network access and try again."
+        )
+    if error_name == "RateLimitError" or status_code == 429:
+        return (
+            f"{provider_label} API is rate-limited (HTTP 429) after multiple retries. "
+            "Try again in a few seconds."
+        )
+    if isinstance(status_code, int) and status_code >= 500:
+        return (
+            f"{provider_label} API is temporarily unavailable (HTTP {status_code}) after multiple retries. "
+            "Try again in a few seconds."
+        )
+    if isinstance(status_code, int):
+        return (
+            f"{provider_label} API request failed after multiple retries "
+            f"(HTTP {status_code}: {error_name})."
+        )
+    return f"{provider_label} API request failed after multiple retries: {error_name}."
+
+
 def _uses_max_completion_tokens(model: str) -> bool:
     """Reasoning models (o1, o3, o4, gpt-5 series) require max_completion_tokens."""
     return model.startswith(("o1", "o3", "o4", "gpt-5"))
@@ -312,10 +380,14 @@ class OpenAILLMClient:
             except GuardrailBlockedError:
                 raise
             except Exception as err:
+                if not _is_openai_retriable_error(err):
+                    raise RuntimeError(
+                        _format_openai_non_retriable_error(err, self._provider_label)
+                    ) from err
                 last_err = err
                 if attempt == max_attempts - 1:
                     raise RuntimeError(
-                        "LLM API request failed after multiple retries. Try again in a few seconds."
+                        _format_openai_retry_error(err, self._provider_label)
                     ) from err
                 time.sleep(backoff_seconds)
                 backoff_seconds *= 2
