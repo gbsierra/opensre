@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from typing import Any, cast
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -38,10 +39,12 @@ from app.types.config import NodeConfig
 NodeWithConfig = Callable[[AgentState, NodeConfig | None], dict[str, Any]]
 
 
-def _accept_langgraph_config(func: NodeWithConfig) -> Callable[..., dict[str, Any]]:
+def _accept_langgraph_config(
+    func: NodeWithConfig,
+) -> Callable[[AgentState, RunnableConfig | None], dict[str, Any]]:
     """Adapt a NodeConfig-typed node for LangGraph runtime injection."""
 
-    def _wrapped(state: AgentState, config: Any = None) -> dict[str, Any]:
+    def _wrapped(state: AgentState, config: RunnableConfig | None = None) -> dict[str, Any]:
         return func(state, cast(NodeConfig | None, config))
 
     _wrapped.__name__ = func.__name__

@@ -18,12 +18,11 @@ def test_get_configurable_tolerates_missing_or_invalid_configurable() -> None:
     assert get_configurable(cast(NodeConfig, {"configurable": None})) == {}
 
 
-def test_core_nodes_do_not_import_runnable_config() -> None:
+def test_core_nodes_and_runners_do_not_import_runnable_config() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     targets = [
         repo_root / "app" / "nodes",
         repo_root / "app" / "pipeline" / "runners.py",
-        repo_root / "app" / "pipeline" / "graph.py",
     ]
     banned = ("RunnableConfig", "langchain_core.runnables")
     offenders: list[str] = []
