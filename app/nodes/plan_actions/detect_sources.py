@@ -1397,6 +1397,74 @@ def detect_sources(
             "connection_verified": True,
         }
 
+    helm_int = (resolved_integrations or {}).get("helm")
+    if helm_int:
+        alert_dict: dict[str, Any] = raw_alert if isinstance(raw_alert, dict) else {}
+        merged_labels: dict[str, Any] = {}
+        merged_labels.update(alert_dict.get("commonLabels", {}) or {})
+        merged_labels.update(alert_dict.get("labels", {}) or {})
+
+        release_name = str(
+            annotations.get("helm_release")
+            or annotations.get("helm_release_name")
+            or merged_labels.get("meta.helm.sh/release-name")
+            or alert_dict.get("helm_release", "")
+            or alert_dict.get("helm_release_name", "")
+        ).strip()
+        ann_keys = {str(k).lower() for k in annotations}
+        helm_annotation_hit = any(
+            k in ann_keys
+            for k in (
+                "helm_release",
+                "helm_release_name",
+                "helm_chart",
+                "helm_revision",
+                "helm_namespace",
+            )
+        ) or any(str(k).lower().startswith("meta.helm.sh/") for k in annotations)
+        helm_hint_text = " ".join(
+            str(value)
+            for value in (
+                alert_dict.get("alert_name", ""),
+                alert_dict.get("error_message", ""),
+                annotations.get("summary", ""),
+                annotations.get("description", ""),
+                annotations.get("message", ""),
+            )
+            if value
+        ).lower()
+        helm_markers = (
+            "helm release",
+            "helm chart",
+            "helm upgrade",
+            "helm rollback",
+            "helm install",
+            "helm uninstall",
+            "failed helm",
+            " helm ",
+        )
+        has_helm_phrase = any(marker in helm_hint_text for marker in helm_markers)
+        if release_name or helm_annotation_hit or has_helm_phrase:
+            ns_hint = str(
+                annotations.get("helm_namespace")
+                or annotations.get("k8s_namespace")
+                or annotations.get("kubernetes_namespace")
+                or merged_labels.get("meta.helm.sh/release-namespace")
+                or alert_dict.get("helm_namespace", "")
+                or helm_int.get("default_namespace", "")
+                or ""
+            ).strip()
+            sources["helm"] = {
+                "helm_path": str(helm_int.get("helm_path", "helm") or "helm").strip() or "helm",
+                "kube_context": str(helm_int.get("kube_context", "")).strip(),
+                "kubeconfig": str(helm_int.get("kubeconfig", "")).strip(),
+                "default_namespace": str(helm_int.get("default_namespace", "")).strip(),
+                "release_name": release_name,
+                "namespace": ns_hint,
+                "integration_id": str(helm_int.get("integration_id", "")).strip(),
+                "connection_verified": True,
+            }
+
     argocd_int = (resolved_integrations or {}).get("argocd")
     if argocd_int and str(argocd_int.get("base_url", "")).strip():
         application_name = str(

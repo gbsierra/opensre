@@ -435,7 +435,6 @@ class TestStreamRendererDiagnoseStreaming:
         renderer.render_stream(_events_mode_stream())
 
         assert renderer._diagnose_buffer == []
-        assert renderer._diagnose_live is None
         assert "diagnose_root_cause" not in renderer.node_names_seen
 
     @patch.dict(os.environ, {"TRACER_OUTPUT_FORMAT": "text"})
@@ -585,7 +584,5 @@ class TestStreamRendererDiagnoseStreaming:
             assert "LLM quota exhausted" in str(exc)
 
         # _finish_active_node runs in the finally block and routes diagnose
-        # through _finish_diagnose_streaming, which closes the Live region
-        # and clears _active_node.
-        assert renderer._diagnose_live is None
+        # through _finish_diagnose_streaming, which clears _active_node.
         assert renderer._active_node is None
