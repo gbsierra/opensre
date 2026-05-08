@@ -30,6 +30,7 @@ def test_config_show_inspects_local_file_not_env(monkeypatch, tmp_path: Path) ->
     result = runner.invoke(cli, ["config", "show"])
 
     assert result.exit_code == 0
+    assert "on-disk values" in result.output
     assert "interactive:" in result.output
     assert "enabled: false" in result.output
     assert "layout: classic" in result.output
@@ -68,7 +69,9 @@ def test_config_set_round_trips_enabled(monkeypatch, tmp_path: Path) -> None:
     assert data["interactive"]["enabled"] is False
 
 
-def test_config_set_invalid_enabled_value_returns_helpful_error(monkeypatch, tmp_path: Path) -> None:
+def test_config_set_invalid_enabled_value_returns_helpful_error(
+    monkeypatch, tmp_path: Path
+) -> None:
     _patch_config_home(monkeypatch, tmp_path)
     runner = CliRunner()
 
@@ -92,7 +95,8 @@ def test_config_set_malformed_file_preserves_contents(monkeypatch, tmp_path: Pat
     opensre_home = _patch_config_home(monkeypatch, tmp_path)
     config_path = opensre_home / "config.yml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    original_text = "::: not valid yaml :::\n"
+    # Unclosed flow sequence — PyYAML rejects this reliably (unlike "::: ..." edge cases).
+    original_text = "key: [\n"
     config_path.write_text(original_text, encoding="utf-8")
 
     runner = CliRunner()
@@ -113,7 +117,8 @@ def test_config_show_handles_empty_file(monkeypatch, tmp_path: Path) -> None:
     result = runner.invoke(cli, ["config", "show"])
 
     assert result.exit_code == 0
-    assert result.output.strip() == "{}"
+    assert "on-disk values" in result.output
+    assert "{}" in result.output
 
 
 def test_config_set_unknown_key_returns_helpful_error(monkeypatch, tmp_path: Path) -> None:

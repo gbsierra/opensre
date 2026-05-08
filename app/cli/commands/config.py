@@ -168,6 +168,8 @@ def config_show() -> None:
 
     import yaml  # type: ignore[import-untyped]
 
+    path = _config_path()
+    click.echo(f"# {path} (on-disk values; environment variables do not override this output)")
     click.echo(yaml.safe_dump(payload, sort_keys=False).rstrip())
 
 
