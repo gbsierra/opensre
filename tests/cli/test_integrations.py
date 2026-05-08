@@ -54,7 +54,7 @@ def test_integrations_setup_accepts_vercel() -> None:
     with (
         patch("app.cli.commands.integrations.capture_integration_setup_started"),
         patch("app.cli.commands.integrations.capture_integration_setup_completed"),
-        patch("app.cli.commands.integrations.capture_integration_verified"),
+        patch("app.cli.commands.integrations.capture_integration_verified") as mock_capture,
         patch("app.integrations.cli.cmd_setup") as mock_setup,
         patch("app.integrations.cli.cmd_verify", return_value=1) as mock_verify,
     ):
@@ -64,6 +64,7 @@ def test_integrations_setup_accepts_vercel() -> None:
     assert result.exit_code == 1
     mock_setup.assert_called_once_with("vercel")
     mock_verify.assert_called_once_with("vercel")
+    mock_capture.assert_not_called()
 
 
 def test_setup_vercel_saves_credentials(monkeypatch) -> None:
@@ -100,11 +101,15 @@ def test_integrations_setup_skips_auto_verify_for_unverifiable_service() -> None
         patch("app.integrations.cli.cmd_setup") as mock_setup,
         patch("app.integrations.cli.cmd_verify") as mock_verify,
     ):
-        mock_setup.return_value = "opensearch"
-        result = runner.invoke(cli, ["integrations", "setup", "opensearch"])
+        # rds is registered in SETUP_SERVICES but intentionally absent from
+        # VERIFY_SERVICES, so it exercises the auto-verify-skip path.
+        # (opensearch was used here previously but moved into VERIFY_SERVICES
+        # by PR #1143, which is why this assertion was updated.)
+        mock_setup.return_value = "rds"
+        result = runner.invoke(cli, ["integrations", "setup", "rds"])
 
     assert result.exit_code == 0
-    mock_setup.assert_called_once_with("opensearch")
+    mock_setup.assert_called_once_with("rds")
     mock_verify.assert_not_called()
 
 
@@ -139,7 +144,7 @@ def test_integrations_verify_accepts_openclaw() -> None:
         "openclaw",
         send_slack_test=False,
     )
-    mock_capture.assert_called_once_with("openclaw")
+    mock_capture.assert_not_called()
 
 
 def test_integrations_verify_accepts_argocd() -> None:

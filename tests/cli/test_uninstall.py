@@ -211,7 +211,6 @@ def test_uninstall_command_yes_flag_skips_prompt() -> None:
     runner = CliRunner()
 
     with (
-        patch("app.cli.commands.general.capture_cli_invoked"),
         patch("app.cli.support.uninstall._data_dirs", return_value=[]),
         patch("app.cli.support.uninstall._is_binary_install", return_value=False),
         patch("app.cli.support.uninstall._pip_uninstall", return_value=0),
@@ -226,7 +225,6 @@ def test_uninstall_command_short_yes_flag() -> None:
     runner = CliRunner()
 
     with (
-        patch("app.cli.commands.general.capture_cli_invoked"),
         patch("app.cli.support.uninstall._data_dirs", return_value=[]),
         patch("app.cli.support.uninstall._is_binary_install", return_value=False),
         patch("app.cli.support.uninstall._pip_uninstall", return_value=0),
@@ -240,4 +238,4 @@ def test_uninstall_help_describes_command() -> None:
     runner = CliRunner()
     result = runner.invoke(cli, ["uninstall", "--help"])
     assert result.exit_code == 0
-    assert "Uninstall" in result.output
+    assert "Remove opensre and all local data from this machine." in result.output

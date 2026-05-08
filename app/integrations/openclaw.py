@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 from collections.abc import AsyncIterator, Coroutine, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
@@ -287,6 +288,24 @@ def openclaw_config_from_env() -> OpenClawConfig | None:
     )
 
 
+def openclaw_runtime_unavailable_reason(config: OpenClawConfig) -> str | None:
+    """Return a setup/runtime error when the config cannot be used locally."""
+    if not config.is_configured:
+        return "OpenClaw is not configured: provide a URL (HTTP/SSE) or command (stdio)."
+
+    if config.mode != "stdio":
+        return None
+
+    command = os.path.expanduser((config.command or "").strip())
+    if not command:
+        return "OpenClaw is not configured: provide a URL (HTTP/SSE) or command (stdio)."
+
+    if shutil.which(command) is None:
+        return describe_openclaw_error(FileNotFoundError(2, "No such file", command), config)
+
+    return None
+
+
 @asynccontextmanager
 async def _open_openclaw_session(config: OpenClawConfig) -> AsyncIterator[ClientSession]:
     """Open an MCP client session for OpenClaw using the configured transport."""
@@ -466,6 +485,13 @@ def validate_openclaw_config(config: OpenClawConfig) -> OpenClawValidationResult
             ),
         )
 
+    runtime_error = openclaw_runtime_unavailable_reason(config)
+    if runtime_error is not None:
+        return OpenClawValidationResult(
+            ok=False,
+            detail=f"OpenClaw MCP validation failed: {runtime_error}",
+        )
+
     try:
         tools = list_openclaw_tools(config)
         tool_names = tuple(sorted(t["name"] for t in tools))
@@ -478,7 +504,7 @@ def validate_openclaw_config(config: OpenClawConfig) -> OpenClawValidationResult
             ),
             tool_names=tool_names,
         )
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:
         return OpenClawValidationResult(
             ok=False,
             detail=f"OpenClaw MCP validation failed: {describe_openclaw_error(err, config)}",

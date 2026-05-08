@@ -11,14 +11,17 @@ import logging
 import os
 import re
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from app.integrations.llm_cli.registry import CLIProviderRegistration
 
-from anthropic import Anthropic, AnthropicBedrock, AuthenticationError
+import boto3
+from anthropic import Anthropic, AnthropicBedrock, AuthenticationError, NotFoundError
 from openai import AuthenticationError as OpenAIAuthError
+from openai import NotFoundError as OpenAINotFoundError
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 
@@ -54,6 +57,26 @@ _VALID_ROOT_CAUSE_CATEGORIES = frozenset(
 )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Retry / timeout policy — shared across providers
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Initial backoff for transient API failures (5xx, overloaded). Doubles each
+# attempt: 1s → 2s → 4s. Tuned for short-lived Anthropic / OpenAI overloads
+# that typically clear within ~10s while still failing fast on hard errors.
+_RETRY_INITIAL_BACKOFF_SEC = 1.0
+
+# Total number of attempts (initial + retries). With the doubling backoff
+# above, three attempts cover ~7s of upstream recovery before surfacing the
+# error to the user.
+_RETRY_MAX_ATTEMPTS = 3
+
+# HTTP client timeout for blocking and streaming SDK calls. 60s gives long
+# generations (Opus, GPT-5) headroom while preventing indefinite hangs on
+# silent network drops.
+_CLIENT_TIMEOUT_SEC = 60.0
+
+
 @dataclass(frozen=True)
 class RootCauseResult:
     root_cause: str
@@ -74,7 +97,7 @@ class LLMClient:
     ) -> None:
         api_key = resolve_llm_api_key("ANTHROPIC_API_KEY")
         self._api_key = api_key
-        self._client = Anthropic(api_key=api_key, timeout=60.0)
+        self._client = Anthropic(api_key=api_key, timeout=_CLIENT_TIMEOUT_SEC)
         self._model = model
         self._max_tokens = max_tokens
         self._temperature = temperature
@@ -96,13 +119,18 @@ class LLMClient:
             )
         if api_key != self._api_key:
             self._api_key = api_key
-            self._client = Anthropic(api_key=api_key, timeout=60.0)
+            self._client = Anthropic(api_key=api_key, timeout=_CLIENT_TIMEOUT_SEC)
 
-    def invoke(self, prompt_or_messages: Any) -> LLMResponse:
+    def _build_request_kwargs(self, prompt_or_messages: Any) -> dict[str, Any]:
+        """Refresh credentials, normalize messages, apply guardrails, and build API kwargs.
+
+        Shared by ``invoke`` and ``invoke_stream`` so both paths apply the same
+        pre-flight (credential refresh, guardrail redaction, kwargs shape).
+        """
         self._ensure_client()
         system, messages = _normalize_messages(prompt_or_messages)
 
-        from app.guardrails.engine import GuardrailBlockedError, get_guardrail_engine
+        from app.guardrails.engine import get_guardrail_engine
 
         engine = get_guardrail_engine()
         if engine.is_active:
@@ -120,9 +148,15 @@ class LLMClient:
             kwargs["system"] = system
         if self._temperature is not None:
             kwargs["temperature"] = self._temperature
+        return kwargs
 
-        backoff_seconds = 1.0
-        max_attempts = 3
+    def invoke(self, prompt_or_messages: Any) -> LLMResponse:
+        from app.guardrails.engine import GuardrailBlockedError
+
+        kwargs = self._build_request_kwargs(prompt_or_messages)
+
+        backoff_seconds = _RETRY_INITIAL_BACKOFF_SEC
+        max_attempts = _RETRY_MAX_ATTEMPTS
         last_err: Exception | None = None
         for attempt in range(max_attempts):
             try:
@@ -131,6 +165,11 @@ class LLMClient:
             except AuthenticationError as err:
                 raise RuntimeError(
                     "Anthropic authentication failed. Check ANTHROPIC_API_KEY in your environment or .env."
+                ) from err
+            except NotFoundError as err:
+                raise RuntimeError(
+                    f"Anthropic model '{self._model}' was not found. "
+                    "Check your configured model name and try again."
                 ) from err
             except GuardrailBlockedError:
                 raise
@@ -146,17 +185,100 @@ class LLMClient:
         content = _extract_text(response)
         return LLMResponse(content=content)
 
+    def invoke_stream(self, prompt_or_messages: Any) -> Iterator[str]:
+        """Yield text chunks as the model emits them.
+
+        Retries transient failures (e.g. ``529 overloaded_error``, network
+        blips) **only before any chunk has been yielded** — once the first
+        token has reached the caller, retrying would duplicate visible output,
+        so any post-emission failure propagates immediately. Auth and
+        guardrail errors never retry.
+        """
+        from app.guardrails.engine import GuardrailBlockedError
+
+        kwargs = self._build_request_kwargs(prompt_or_messages)
+
+        backoff_seconds = _RETRY_INITIAL_BACKOFF_SEC
+        max_attempts = _RETRY_MAX_ATTEMPTS
+        for attempt in range(max_attempts):
+            emitted = False
+            try:
+                with self._client.messages.stream(**kwargs) as stream:
+                    for text in stream.text_stream:
+                        emitted = True
+                        yield text
+                return
+            except AuthenticationError as err:
+                raise RuntimeError(
+                    "Anthropic authentication failed. Check ANTHROPIC_API_KEY in your environment or .env."
+                ) from err
+            except NotFoundError as err:
+                raise RuntimeError(
+                    f"Anthropic model '{self._model}' was not found. "
+                    "Check your configured model name and try again."
+                ) from err
+            except GuardrailBlockedError:
+                raise
+            except Exception as err:
+                if emitted:
+                    # Mid-stream failure: never retry — chunks are already on
+                    # the user's screen and a retry would duplicate them.
+                    raise
+                if attempt == max_attempts - 1:
+                    raise RuntimeError(_format_anthropic_retry_error(err)) from err
+                time.sleep(backoff_seconds)
+                backoff_seconds *= 2
+
+
+def _is_anthropic_bedrock_model(model_id: str) -> bool:
+    """Return True when *model_id* should be routed through the AnthropicBedrock SDK.
+
+    Anthropic model IDs on Bedrock look like:
+      - ``anthropic.claude-*``
+      - ``us.anthropic.claude-*``  (cross-region inference profiles)
+      - ``arn:aws:bedrock:*:foundation-model/anthropic.claude-*``
+      - ``arn:aws:bedrock:*:application-inference-profile/*`` (unknown vendor → Converse)
+
+    For ARN-based application inference profiles we cannot tell the backing
+    foundation model from the ID alone (it may point at Mistral, Llama, etc.).
+    Those ARNs route to the model-agnostic Converse API rather than forcing
+    the Anthropic SDK (which would fail for non-Claude pools).
+    """
+    model_lower = model_id.lower()
+    if "anthropic.claude" in model_lower:
+        return True
+    # Application inference profile ARNs encode no vendor — use converse (all models).
+    if model_lower.startswith("arn:") and "application-inference-profile" in model_lower:
+        return False
+    # Anything else (mistral.*, openai.*, meta.*, etc.) → boto3 converse
+    return False
+
 
 class BedrockLLMClient:
-    """LLM client using Anthropic models via Amazon Bedrock (IAM auth, no API key)."""
+    """LLM client for Amazon Bedrock (IAM auth, no API key).
+
+    Supports **all** Bedrock models:
+    - Anthropic Claude models → AnthropicBedrock SDK (existing behaviour)
+    - Non-Anthropic models (Mistral, GPT OSS, Llama, etc.) → boto3 ``converse`` API
+    """
 
     def __init__(
         self, *, model: str, max_tokens: int = 1024, temperature: float | None = None
     ) -> None:
-        self._client = AnthropicBedrock(aws_region=os.getenv("AWS_REGION", "us-east-1"))
         self._model = model
         self._max_tokens = max_tokens
         self._temperature = temperature
+        self._use_anthropic = _is_anthropic_bedrock_model(model)
+        self._aws_region = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
+
+        if self._use_anthropic:
+            self._anthropic_client: AnthropicBedrock | None = AnthropicBedrock(
+                aws_region=self._aws_region
+            )
+            self._boto3_client: Any = None
+        else:
+            self._anthropic_client = None
+            self._boto3_client = boto3.client("bedrock-runtime", region_name=self._aws_region)
 
     def with_config(self, **_kwargs: Any) -> BedrockLLMClient:
         return self
@@ -167,7 +289,9 @@ class BedrockLLMClient:
     def bind_tools(self, _tools: list[Any]) -> BedrockLLMClient:
         return self
 
-    def invoke(self, prompt_or_messages: Any) -> LLMResponse:
+    def _invoke_anthropic(self, prompt_or_messages: Any) -> LLMResponse:
+        """Invoke via AnthropicBedrock SDK (Claude models only)."""
+        assert self._anthropic_client is not None
         system, messages = _normalize_messages(prompt_or_messages)
 
         from app.guardrails.engine import GuardrailBlockedError, get_guardrail_engine
@@ -189,12 +313,12 @@ class BedrockLLMClient:
         if self._temperature is not None:
             kwargs["temperature"] = self._temperature
 
-        backoff_seconds = 1.0
-        max_attempts = 3
+        backoff_seconds = _RETRY_INITIAL_BACKOFF_SEC
+        max_attempts = _RETRY_MAX_ATTEMPTS
         last_err: Exception | None = None
         for attempt in range(max_attempts):
             try:
-                response = self._client.messages.create(**kwargs)
+                response = self._anthropic_client.messages.create(**kwargs)
                 break
             except GuardrailBlockedError:
                 raise
@@ -211,6 +335,89 @@ class BedrockLLMClient:
 
         content = _extract_text(response)
         return LLMResponse(content=content)
+
+    def _invoke_converse(self, prompt_or_messages: Any) -> LLMResponse:
+        """Invoke via boto3 converse API (works with all Bedrock models)."""
+        assert self._boto3_client is not None
+        system, messages = _normalize_messages(prompt_or_messages)
+
+        from app.guardrails.engine import GuardrailBlockedError, get_guardrail_engine
+
+        engine = get_guardrail_engine()
+        if engine.is_active:
+            for msg in messages:
+                msg["content"] = engine.apply(msg["content"])
+            if system:
+                system = engine.apply(system)
+
+        # Convert to converse API message format ({ "text": "..." } blocks only).
+        converse_messages = [
+            {"role": msg["role"], "content": [{"text": msg["content"]}]} for msg in messages
+        ]
+
+        kwargs: dict[str, Any] = {
+            "modelId": self._model,
+            "messages": converse_messages,
+            "inferenceConfig": {"maxTokens": self._max_tokens},
+        }
+        if system:
+            kwargs["system"] = [{"text": system}]
+        if self._temperature is not None:
+            kwargs["inferenceConfig"]["temperature"] = self._temperature
+
+        backoff_seconds = _RETRY_INITIAL_BACKOFF_SEC
+        max_attempts = _RETRY_MAX_ATTEMPTS
+        last_err: Exception | None = None
+        for attempt in range(max_attempts):
+            try:
+                response = self._boto3_client.converse(**kwargs)
+                break
+            except GuardrailBlockedError:
+                raise
+            except Exception as err:
+                last_err = err
+                if attempt == max_attempts - 1:
+                    raise RuntimeError(
+                        f"Bedrock API request failed after {max_attempts} attempts: {type(err).__name__}: {err}"
+                    ) from err
+                time.sleep(backoff_seconds)
+                backoff_seconds *= 2
+        else:
+            raise RuntimeError("Bedrock invocation failed without a concrete error") from last_err
+
+        # Extract text from converse response
+        output_message = response.get("output", {}).get("message", {})
+        content_blocks = output_message.get("content", [])
+        text_parts: list[str] = []
+        for block in content_blocks:
+            if "text" in block:
+                text_parts.append(block["text"])
+        content = "\n".join(text_parts).strip()
+        if not content:
+            stop_reason = response.get("stopReason")
+            logger.warning(
+                "Bedrock converse returned no text blocks (stopReason=%s); raw response: %s",
+                stop_reason,
+                response,
+            )
+            raise RuntimeError(
+                f"Bedrock converse returned no text content (stopReason={stop_reason!r})"
+            )
+        return LLMResponse(content=content)
+
+    def invoke(self, prompt_or_messages: Any) -> LLMResponse:
+        if self._use_anthropic:
+            return self._invoke_anthropic(prompt_or_messages)
+        return self._invoke_converse(prompt_or_messages)
+
+    def invoke_stream(self, prompt_or_messages: Any) -> Iterator[str]:
+        """Yield the full response as one chunk; real streaming is a follow-up.
+
+        Bedrock supports token streaming via ``AnthropicBedrock.messages.stream``
+        and ``boto3 converse_stream``, but wiring those paths is deferred —
+        the yield-once fallback satisfies the protocol contract.
+        """
+        yield self.invoke(prompt_or_messages).content
 
 
 def _format_anthropic_retry_error(err: Exception) -> str:
@@ -245,17 +452,27 @@ class OpenAILLMClient:
         base_url: str | None = None,
         api_key_env: str = "OPENAI_API_KEY",
         api_key_default: str = "",
+        default_headers: dict[str, str] | None = None,
     ) -> None:
         api_key = resolve_llm_api_key(api_key_env) or api_key_default
         self._api_key = api_key
         self._api_key_default = api_key_default
         self._base_url = base_url
         self._api_key_env = api_key_env
+        self._default_headers = default_headers
         self._provider_label = api_key_env.removesuffix("_API_KEY").replace("_", " ").title()
-        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=60.0)
+        self._client: OpenAI | None = None
         self._model = model
         self._max_tokens = max_tokens
         self._temperature = temperature
+
+    def _build_client(self, api_key: str) -> OpenAI:
+        return OpenAI(
+            api_key=api_key,
+            base_url=self._base_url,
+            timeout=_CLIENT_TIMEOUT_SEC,
+            default_headers=self._default_headers,
+        )
 
     def with_config(self, **_kwargs) -> OpenAILLMClient:
         return self
@@ -266,21 +483,27 @@ class OpenAILLMClient:
     def bind_tools(self, _tools: list) -> OpenAILLMClient:
         return self
 
-    def _ensure_client(self) -> None:
+    def _ensure_client(self) -> OpenAI:
         api_key = resolve_llm_api_key(self._api_key_env) or self._api_key_default
         if not api_key:
             raise RuntimeError(
                 f"Missing {self._api_key_env}. Set it in your environment, .env, or secure local keychain before running LLM steps."
             )
-        if api_key != self._api_key:
+        if self._client is None or api_key != self._api_key:
             self._api_key = api_key
-            self._client = OpenAI(api_key=api_key, base_url=self._base_url, timeout=60.0)
+            self._client = self._build_client(api_key)
+        return self._client
 
-    def invoke(self, prompt_or_messages: Any) -> LLMResponse:
+    def _build_request_kwargs(self, prompt_or_messages: Any) -> dict[str, Any]:
+        """Refresh credentials, normalize messages, apply guardrails, and build API kwargs.
+
+        Shared by ``invoke`` and ``invoke_stream`` so both paths apply the same
+        pre-flight (credential refresh, guardrail redaction, kwargs shape).
+        """
         self._ensure_client()
         messages = _normalize_messages_openai(prompt_or_messages)
 
-        from app.guardrails.engine import GuardrailBlockedError, get_guardrail_engine
+        from app.guardrails.engine import get_guardrail_engine
 
         engine = get_guardrail_engine()
         if engine.is_active:
@@ -297,17 +520,32 @@ class OpenAILLMClient:
         }
         if self._temperature is not None:
             kwargs["temperature"] = self._temperature
+        return kwargs
 
-        backoff_seconds = 1.0
-        max_attempts = 3
+    def invoke(self, prompt_or_messages: Any) -> LLMResponse:
+        from app.guardrails.engine import GuardrailBlockedError
+
+        # Build kwargs first (also calls _ensure_client internally) so the
+        # captured client below reflects the latest key — guards against a
+        # rotation between the two _ensure_client invocations.
+        kwargs = self._build_request_kwargs(prompt_or_messages)
+        client = self._ensure_client()
+
+        backoff_seconds = _RETRY_INITIAL_BACKOFF_SEC
+        max_attempts = _RETRY_MAX_ATTEMPTS
         last_err: Exception | None = None
         for attempt in range(max_attempts):
             try:
-                response = self._client.chat.completions.create(**kwargs)
+                response = client.chat.completions.create(**kwargs)
                 break
             except OpenAIAuthError as err:
                 raise RuntimeError(
                     f"{self._provider_label} authentication failed. Check {self._api_key_env} in your environment, .env, or secure local keychain."
+                ) from err
+            except OpenAINotFoundError as err:
+                raise RuntimeError(
+                    f"{self._provider_label} model '{self._model}' was not found. "
+                    "Check your configured model name or endpoint."
                 ) from err
             except GuardrailBlockedError:
                 raise
@@ -326,6 +564,58 @@ class OpenAILLMClient:
             raise RuntimeError("OpenAI API returned an empty choices list")
         content = response.choices[0].message.content or ""
         return LLMResponse(content=content.strip())
+
+    def invoke_stream(self, prompt_or_messages: Any) -> Iterator[str]:
+        """Yield text chunks as the model emits them.
+
+        Retries transient failures (overloaded, network blips) **only before
+        any chunk has been yielded** — once a token has reached the caller,
+        retrying would duplicate visible output, so post-emission failures
+        propagate. Auth and guardrail errors never retry.
+        """
+        from app.guardrails.engine import GuardrailBlockedError
+
+        # Build kwargs first (also calls _ensure_client internally) so the
+        # captured client below reflects the latest key — same rotation
+        # guard as ``invoke``.
+        kwargs = self._build_request_kwargs(prompt_or_messages)
+        client = self._ensure_client()
+
+        backoff_seconds = _RETRY_INITIAL_BACKOFF_SEC
+        max_attempts = _RETRY_MAX_ATTEMPTS
+        for attempt in range(max_attempts):
+            emitted = False
+            try:
+                for chunk in client.chat.completions.create(stream=True, **kwargs):
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        emitted = True
+                        yield delta
+                return
+            except OpenAIAuthError as err:
+                raise RuntimeError(
+                    f"{self._provider_label} authentication failed. Check {self._api_key_env} in your environment, .env, or secure local keychain."
+                ) from err
+            except OpenAINotFoundError as err:
+                raise RuntimeError(
+                    f"{self._provider_label} model '{self._model}' was not found. "
+                    "Check your configured model name or endpoint."
+                ) from err
+            except GuardrailBlockedError:
+                raise
+            except Exception as err:
+                if emitted:
+                    # Mid-stream failure: never retry — chunks are already on
+                    # the user's screen and a retry would duplicate them.
+                    raise
+                if attempt == max_attempts - 1:
+                    raise RuntimeError(
+                        "LLM API request failed after multiple retries. Try again in a few seconds."
+                    ) from err
+                time.sleep(backoff_seconds)
+                backoff_seconds *= 2
 
 
 class StructuredOutputClient:
@@ -366,6 +656,9 @@ class SupportsLLMInvoke(Protocol):
         pass
 
     def invoke(self, prompt_or_messages: Any) -> LLMResponse:
+        pass
+
+    def invoke_stream(self, prompt_or_messages: Any) -> Iterator[str]:
         pass
 
 
@@ -498,6 +791,22 @@ def _create_llm_client(model_type: str) -> _LLMClientType:
             max_tokens=config.max_tokens,
             base_url=OPENROUTER_BASE_URL,
             api_key_env="OPENROUTER_API_KEY",
+        )
+    elif provider == "requesty":
+        from app.config import REQUESTY_BASE_URL, REQUESTY_LLM_CONFIG
+
+        config = REQUESTY_LLM_CONFIG
+        model = (
+            settings.requesty_reasoning_model
+            if model_type == "reasoning"
+            else settings.requesty_toolcall_model
+        )
+        return OpenAILLMClient(
+            model=model,
+            max_tokens=config.max_tokens,
+            base_url=REQUESTY_BASE_URL,
+            api_key_env="REQUESTY_API_KEY",
+            default_headers={"X-Title": "OpenSRE"},
         )
     elif provider == "gemini":
         from app.config import GEMINI_LLM_CONFIG

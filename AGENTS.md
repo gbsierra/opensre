@@ -2,8 +2,9 @@
 
 ## Build and Run commands
 
-- Build `make install`
-- Run `opensre`
+- Build `make install` (sets up the project environment via `uv sync` and installs this repo in editable mode)
+- Run **`uv run opensre …`** from the repo root while developing — preferred approach, uses this checkout even if another `opensre` is on your `PATH`.
+- Use **`uv run python …`** for any Python commands.
 
 ## Lint & Format
 
@@ -33,7 +34,6 @@
 
 ## 1. Repo Map
 
-
 | Path              | What it does                                                                             |
 | ----------------- | ---------------------------------------------------------------------------------------- |
 | `app/`            | Core agent logic, CLI, tools, integrations, services, graph pipeline, and runtime state. |
@@ -46,7 +46,6 @@
 | `README.md`       | Product overview, quick start, capabilities, integrations, and common workflows.         |
 | `CONTRIBUTING.md` | Contribution workflow, branch/PR guidance, and quality expectations.                     |
 
-
 `app/` one level deeper:
 
 - `app/analytics/` — Analytics event plumbing and install helpers used by the onboarding flow.
@@ -54,8 +53,8 @@
 - `app/cli/` — Command-line interface, onboarding wizard, local LLM helpers, and CLI tests support. Interactive terminal (TTY) loop: `app/cli/interactive_shell/`.
 - `app/constants/` — Shared prompt and other static constants.
 - `app/deployment/` — Single home for “deployment” code, split by concern:
-  - `app/deployment/methods/` — *How* you ship (Railway CLI, LangSmith/LangGraph).
-  - `app/deployment/operations/` — *Runtime / infra* around a deployment (health polling, EC2 output files, provider dry-run validation).
+    - `app/deployment/methods/` — _How_ you ship (Railway CLI, LangSmith/LangGraph).
+    - `app/deployment/operations/` — _Runtime / infra_ around a deployment (health polling, EC2 output files, provider dry-run validation).
 - `app/entrypoints/` — SDK and MCP entrypoints exposed to external runtimes.
 - `app/guardrails/` — Guardrail rules, evaluation engine, audit helpers, and CLI bindings.
 - `app/integrations/` — Integration config normalization, verification, selectors, store, and catalog logic.

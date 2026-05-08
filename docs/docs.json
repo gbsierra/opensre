@@ -83,6 +83,12 @@
             ]
           },
           {
+            "group": "LLM providers",
+            "pages": [
+              "llm-providers"
+            ]
+          },
+          {
             "group": "Observability and incidents",
             "expanded": true,
             "pages": [
@@ -104,13 +110,21 @@
             "pages": [
               "aws",
               "bitbucket",
-              "discord",
               "github",
               "gitlab",
               "google-docs",
               "jira",
-              "slack",
               "vercel"
+            ]
+          },
+          {
+            "group": "Messaging",
+            "expanded": true,
+            "pages": [
+              "messaging/index",
+              "messaging/slack",
+              "messaging/discord",
+              "messaging/telegram"
             ]
           },
           {
@@ -122,9 +136,11 @@
               "mongodb",
               "mysql",
               "openclaw",
+              "opensearch",
               "postgresql",
               "prefect",
-              "rabbitmq"
+              "rabbitmq",
+              "rds"
             ]
           }
         ]

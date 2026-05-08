@@ -5,19 +5,6 @@ from pydantic import BaseModel, ValidationError
 from app.nodes.investigate.types import ExecutedHypothesis
 
 
-def _get_executed_sources(executed_hypotheses: list[ExecutedHypothesis]) -> set[str]:
-    """Extract executed sources from hypotheses history."""
-    executed_sources_set = set()
-    for h in executed_hypotheses:
-        sources = h.get("sources", [])
-        if isinstance(sources, list):
-            executed_sources_set.update(sources)
-        single_source = h.get("source")
-        if single_source:
-            executed_sources_set.add(single_source)
-    return executed_sources_set
-
-
 def get_blocked_action_names(executed_hypotheses: list[ExecutedHypothesis]) -> set[str]:
     """Actions that should not be offered again to the planner."""
     blocked_actions: set[str] = set()
@@ -116,6 +103,7 @@ def _build_available_sources_hint(available_sources: dict[str, dict]) -> str:
 - Service Name: {grafana.get("service_name")}
 - Pipeline: {grafana.get("pipeline_name")}
 - Use query_grafana_logs to search Loki for pipeline errors, or to fetch AWS Performance Insights and RDS events for database diagnostics{traces_hint}
+- Use query_grafana_metrics for database resource metrics such as FreeStorageSpace, WriteIOPS, CPU, connections, and latency
 - Use query_grafana_alert_rules to inspect alert configuration"""
         )
 
@@ -161,7 +149,7 @@ def _build_available_sources_hint(available_sources: dict[str, dict]) -> str:
 - Use search_github_code and get_github_file_contents to trace the failure into code"""
         )
 
-    if "openclaw" in available_sources:
+    if available_sources.get("openclaw", {}).get("connection_verified"):
         openclaw = available_sources["openclaw"]
         endpoint = openclaw.get("openclaw_command") or openclaw.get("openclaw_url") or "unknown"
         hints.append(
@@ -265,8 +253,21 @@ def _build_available_sources_hint(available_sources: dict[str, dict]) -> str:
 
     if "eks" in available_sources:
         eks = available_sources["eks"]
-        hints.append(
-            f"""EKS Cluster Available:
+        if getattr(eks.get("_backend"), "is_cloudopsbench_backend", False):
+            hints.append(
+                f"""Cloud-OpsBench Kubernetes Snapshot Available:
+- Cluster: {eks.get("cluster_name")}
+- Namespace: {eks.get("namespace", "unknown")}
+- Use the Cloud-OpsBench actions exactly as named in the benchmark:
+  GetResources, DescribeResource, GetClusterConfiguration, GetAlerts,
+  GetErrorLogs, GetRecentLogs, GetServiceDependencies, GetAppYAML,
+  CheckServiceConnectivity, CheckNodeServiceStatus.
+- Prefer the smallest sequence of cache-backed actions that identifies the
+  root cause and supports a strict CloudOps-style final diagnosis."""
+            )
+        else:
+            hints.append(
+                f"""EKS Cluster Available:
 - Cluster: {eks.get("cluster_name")}
 - Namespace: {eks.get("namespace", "unknown")} (may not exist — verify with list_eks_namespaces)
 - Pod: {eks.get("pod_name") or "unknown — use list_eks_pods to discover"}
@@ -279,7 +280,7 @@ IMPORTANT: Always start with discovery actions before fetching specific resource
   4. get_eks_events — get Warning events (OOMKilled, BackOff, FailedScheduling)
   5. get_eks_node_health — check node capacity and pressure conditions
   Only use get_eks_pod_logs / get_eks_deployment_status after confirming the resource exists."""
-        )
+            )
 
     if "upstream_context" in available_sources:
         upstream = available_sources["upstream_context"]
@@ -432,6 +433,7 @@ When selecting actions, optimize for:
 Additionally:
 - When connection counts are high, explicitly evaluate whether idle connections are contributing to the issue and include this explicitly in your reasoning if relevant.
 - When storage pressure is observed, explicitly consider audit logs or database-specific logging mechanisms (e.g. audit_log for PostgreSQL/Aurora)
+- For RDS/Postgres storage alerts, collect metrics, logs/events, and alert rules together when Grafana is available so the final RCA can connect FreeStorageSpace, WriteIOPS, RDS events, and the triggering alert.
 
 Avoid:
 - collecting general context that does not help separate hypotheses

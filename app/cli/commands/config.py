@@ -1,8 +1,9 @@
-"""CLI commands for reading and writing local OpenSRE config."""
+"""CLI commands for LLM/env config and local ~/.opensre/config.yml."""
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,68 @@ from app.constants import OPENSRE_HOME_DIR
 
 _SUPPORTED_LAYOUTS = {"classic", "pinned"}
 _SUPPORTED_KEYS = ("interactive.enabled", "interactive.layout")
+
+
+def _masked(value: str | None) -> str:
+    if not value:
+        return "(not set)"
+    return value[:4] + "****" if len(value) > 4 else "****"
+
+
+def _emit_llm_config() -> None:
+    """Print current LLM provider and model from environment (legacy `opensre config`)."""
+    from app.cli.support.context import is_json_output
+
+    provider = os.getenv("LLM_PROVIDER", "anthropic").strip().lower() or "anthropic"
+
+    key_env_by_provider: dict[str, str] = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+        "requesty": "REQUESTY_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "nvidia": "NVIDIA_API_KEY",
+        "bedrock": "AWS_DEFAULT_REGION",
+        "minimax": "MINIMAX_API_KEY",
+        "ollama": "OLLAMA_HOST",
+    }
+    model_env_by_provider: dict[str, str] = {
+        "anthropic": "ANTHROPIC_REASONING_MODEL",
+        "openai": "OPENAI_REASONING_MODEL",
+        "openrouter": "OPENROUTER_REASONING_MODEL",
+        "requesty": "REQUESTY_REASONING_MODEL",
+        "gemini": "GEMINI_REASONING_MODEL",
+        "nvidia": "NVIDIA_REASONING_MODEL",
+        "bedrock": "BEDROCK_MODEL",
+        "minimax": "MINIMAX_REASONING_MODEL",
+        "ollama": "OLLAMA_MODEL",
+    }
+
+    key_env = key_env_by_provider.get(provider, "")
+    key_value = os.getenv(key_env, "") if key_env else ""
+    model_env = model_env_by_provider.get(provider, "")
+    model_value = os.getenv(model_env, "") if model_env else ""
+
+    if is_json_output():
+        click.echo(
+            json.dumps(
+                {
+                    "provider": provider,
+                    "model": model_value or None,
+                    "api_key_set": bool(key_value),
+                }
+            )
+        )
+        return
+
+    click.echo(f"Provider : {provider}")
+    if model_value:
+        click.echo(f"Model    : {model_value}")
+    if key_env:
+        click.echo(f"{key_env:<16}: {_masked(key_value)}")
+    click.echo()
+    click.echo("To change LLM settings, run: opensre onboard")
+    click.echo("Local CLI YAML: opensre config show / opensre config set …")
 
 
 def _config_path() -> Path:
@@ -28,9 +91,7 @@ def _load_config() -> dict[str, Any]:
 
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
-        raise click.ClickException(
-            f"Could not parse local config file at {path}: {exc}"
-        ) from exc
+        raise click.ClickException(f"Could not parse local config file at {path}: {exc}") from exc
 
     if data is None:
         return {}
@@ -57,8 +118,7 @@ def _parse_bool(raw_value: str) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise click.UsageError(
-        "Invalid value for interactive.enabled. "
-        "Use one of: true/false, 1/0, yes/no, on/off."
+        "Invalid value for interactive.enabled. Use one of: true/false, 1/0, yes/no, on/off."
     )
 
 
@@ -68,9 +128,13 @@ def _coerce_value(key: str, raw_value: str) -> bool | str:
     if key == "interactive.layout":
         layout = raw_value.strip().lower()
         if layout not in _SUPPORTED_LAYOUTS:
-            raise click.UsageError("Invalid value for interactive.layout. Use 'classic' or 'pinned'.")
+            raise click.UsageError(
+                "Invalid value for interactive.layout. Use 'classic' or 'pinned'."
+            )
         return layout
-    raise click.UsageError(f"Unknown config key '{key}'. Supported keys: {', '.join(_SUPPORTED_KEYS)}")
+    raise click.UsageError(
+        f"Unknown config key '{key}'. Supported keys: {', '.join(_SUPPORTED_KEYS)}"
+    )
 
 
 def _set_nested_key(data: dict[str, Any], dotted_key: str, value: Any) -> dict[str, Any]:
@@ -83,14 +147,17 @@ def _set_nested_key(data: dict[str, Any], dotted_key: str, value: Any) -> dict[s
     return data
 
 
-@click.group(name="config")
-def config_command() -> None:
-    """Inspect and update local CLI config."""
+@click.group(name="config", invoke_without_command=True)
+@click.pass_context
+def config_command(ctx: click.Context) -> None:
+    """LLM/environment config by default; subcommands manage ~/.opensre/config.yml."""
+    if ctx.invoked_subcommand is None:
+        _emit_llm_config()
 
 
 @config_command.command(name="show")
 def config_show() -> None:
-    """Show local config values from ~/.opensre/config.yml."""
+    """Show local ~/.opensre/config.yml values."""
     from app.cli.support.context import is_json_output
 
     payload = _load_config()

@@ -1,4 +1,4 @@
-"""Interactive CLI for managing local integrations (~/.tracer/integrations.json).
+"""Interactive CLI for managing local integrations (~/.config/opensre/integrations.json).
 
 Usage:
     python -m app.integrations setup <service>
@@ -236,24 +236,34 @@ def _setup_slack() -> None:
 
 
 def _setup_opensearch() -> None:
-    endpoint = _p("Endpoint (e.g. https://my-cluster.us-east-1.es.amazonaws.com)")
-    creds: dict[str, Any] = {"endpoint": endpoint}
+    url = _p("URL (e.g. https://my-cluster.us-east-1.es.amazonaws.com)")
+    if not url:
+        _die("url is required.")
+    creds: dict[str, Any] = {"url": url}
     auth_choice = questionary.select(
         "OpenSearch authentication method:",
         choices=[
-            questionary.Choice("Username + Password", value="1"),
-            questionary.Choice("API key", value="2"),
+            questionary.Choice("Username + Password (HTTP Basic Auth)", value="basic"),
+            questionary.Choice("API key", value="api_key"),
+            questionary.Choice("None (security disabled)", value="none"),
         ],
         instruction="(use arrow keys)",
     ).ask()
     if auth_choice is None:
         print("\nAborted.")
         sys.exit(1)
-    if auth_choice == "2":
-        creds["api_key"] = _p("API key", secret=True)
-    else:
-        creds["username"] = _p("Username", default="admin")
-        creds["password"] = _p("Password", secret=True)
+    if auth_choice == "api_key":
+        api_key = _p("API key", secret=True)
+        if not api_key:
+            _die("api_key is required.")
+        creds["api_key"] = api_key
+    elif auth_choice == "basic":
+        username = _p("Username", default="admin")
+        password = _p("Password", secret=True)
+        if not username or not password:
+            _die("username and password are required for basic auth.")
+        creds["username"] = username
+        creds["password"] = password
     upsert_integration("opensearch", {"credentials": creds})
 
 
@@ -763,7 +773,10 @@ def cmd_list() -> None:
         return
 
     if not items:
-        print("  No integrations. Run: python -m app.integrations setup <service>")
+        print(
+            "  No integrations. Run: opensre integrations setup <service>, "
+            "or opensre onboard for the guided wizard."
+        )
         return
     print(f"\n  {_B}{'SERVICE':<14}STATUS    ID{_R}")
     for i in items:

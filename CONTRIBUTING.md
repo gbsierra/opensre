@@ -5,9 +5,8 @@ Welcome to OpenSRE
 ## Quick Links
 
 - **GitHub:** [https://github.com/Tracer-Cloud/opensre](https://github.com/Tracer-Cloud/opensre)
-- **Vision:** `[VISION.md](VISION.md)`
 - **Discord:** [https://discord.gg/opensre](https://discord.gg/opensre)
-- **X/Twitter:** §[@open_sre](https://x.com/open_sre)
+- **X/Twitter:** [@open_sre](https://x.com/open_sre)
 
 ## How to Contribute
 
@@ -21,18 +20,25 @@ Use the path that matches the kind of contribution you want to make:
 6. **Questions** -> Use the docs, email [support@opensre.com](mailto:support@opensre.com), or ask in Discord [#contribute](http://discord.gg/opensre). GitHub Issues are for actionable work.
 7. **Security issues** -> Follow `SECURITY.md`; do not open a public issue.
 
+### Exploring the Codebase
+
+This repo ships with a generated codebase map at `.understand-anything/` — a knowledge graph of files, functions, classes, and their relationships, plus a business-domain view. Open it interactively with the [Understand Anything](https://github.com/Lum1104/Understand-Anything) plugin (e.g., `/understand-anything:understand-dashboard`), or read the JSON files directly.
+
+---
+
 ### Environment Setup
 
 See **[SETUP.md](SETUP.md)** for detailed setup instructions including Windows-specific guidance.
 
 **Quick start:**
 
-1. Clone the repo and create a virtual environment
-2. Install dependencies: `pip install -e ".[dev]"`
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and clone the repository (see [SETUP.md](SETUP.md) for Windows and alternatives)
+2. Install dependencies: `make install`
 3. Run checks: `make lint && make format-check && make typecheck && make test-cov`
+    - When invoking the CLI from your checkout, prefer **`uv run opensre …`** (see `SETUP.md` troubleshooting if another `opensre` shadows `.venv`).
 4. Build release artifacts when needed: `make build`
 
-If you prefer VS Code, you can use the repo's devcontainer at `[.devcontainer/devcontainer.json](.devcontainer/devcontainer.json)` instead of setting up Python manually.
+If you prefer VS Code, you can use the repo's devcontainer at [.devcontainer/devcontainer.json](.devcontainer/devcontainer.json) instead of setting up Python manually.
 
 ---
 
@@ -111,16 +117,17 @@ make test-cov      # pytest: run tests with coverage report
 ```
 
 All four must pass. **CI will block merging if any fail.**
+
 ### Run one focused test
 
 Replace the placeholders with your actual file or test name:
 
-```bash
+````bash
 pytest tests/cli/test_.py                                       # single file
 pytest tests/cli/test_.py::test_                                # single function
 pytest tests/tools/ -k "test_registry"                          # tools example
 pytest tests/synthetic/ -k "test_scenario"                      # no live infra needed
-
+````
 ### 5. Open a Pull Request
 
 Follow the PR template (see below). Link the relevant issue and describe what changed and why.
@@ -146,6 +153,20 @@ Use the **[PR template](.github/PULL_REQUEST_TEMPLATE.md)** (automatically provi
 - Code follows project style (see **Code Quality** section below)
 - Self-reviewed your own code first
 - Considered edge cases
+
+### Greptile Code Review
+
+We use [Greptile](https://greptile.com) for automated code review. Before a PR can be merged it must reach a **5/5 confidence score** with zero unresolved comments.
+
+**Trigger a review** by posting this comment on your PR:
+
+```
+@greptile review
+```
+
+Wait 30–60 seconds for the review to appear, then address each comment and re-trigger until you hit 5/5.
+
+> **Automate the loop** — the [greploop skill](https://skills.sh/greptileai/skills/greploop) handles triggering, waiting, fixing, and re-reviewing automatically until 5/5 is reached.
 
 ### If Your PR Includes Screenshots or Logs
 
@@ -192,7 +213,7 @@ make lint          # Auto-fixes many style issues
 make format-check  # Checks formatting without modifying files
 make typecheck     # Catches type errors
 make test-cov      # Ensures tests pass and coverage is tracked
-```
+````
 
 To verify the package can be shipped, run:
 
