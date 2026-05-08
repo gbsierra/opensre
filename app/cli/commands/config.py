@@ -1,4 +1,4 @@
-"""CLI commands for LLM/env config and local ~/.opensre/config.yml."""
+"""CLI commands for LLM/env config and local ~/.config/opensre/config.yml."""
 
 from __future__ import annotations
 
@@ -157,7 +157,7 @@ def config_command(ctx: click.Context) -> None:
 
 @config_command.command(name="show")
 def config_show() -> None:
-    """Show local ~/.config/opensre/config.yml values.""
+    """Show local ~/.config/opensre/config.yml values."""
     from app.cli.support.context import is_json_output
 
     payload = _load_config()
@@ -177,7 +177,7 @@ def config_show() -> None:
 @click.argument("key")
 @click.argument("value")
 def config_set(key: str, value: str) -> None:
-    """Set one local config key in ~/.opensre/config.yml."""
+    """Set one local config key in ~/.config/opensre/config.yml."""
     key = key.strip()
     coerced = _coerce_value(key, value)
     data = _load_config()
