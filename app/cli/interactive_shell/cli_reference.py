@@ -113,13 +113,13 @@ def _format_command_reference(
         lines.extend(_format_param(param) for param in params)
 
     if include_subcommands and isinstance(command, click.Group):
-        ctx = click.Context(command, info_name=path.rsplit(" ", 1)[-1])
         command_rows: list[tuple[str, str]] = []
-        for name in command.list_commands(ctx):
-            subcommand = command.get_command(ctx, name)
-            if subcommand is None or subcommand.hidden:
-                continue
-            command_rows.append((name, subcommand.get_short_help_str(limit=160)))
+        with click.Context(command, info_name=path.rsplit(" ", 1)[-1]) as ctx:
+            for name in command.list_commands(ctx):
+                subcommand = command.get_command(ctx, name)
+                if subcommand is None or subcommand.hidden:
+                    continue
+                command_rows.append((name, subcommand.get_short_help_str(limit=160)))
         if command_rows:
             lines.extend(["", "Commands:"])
             lines.extend(f"  {name} - {summary}".rstrip() for name, summary in command_rows)
@@ -136,13 +136,13 @@ def _build_cli_reference_text_uncached() -> str:
     parts.append("=== opensre --help ===\n")
     parts.append(_format_command_reference(cli, path="opensre"))
 
-    ctx = click.Context(cli, info_name="opensre")
-    for name in sorted(cli.commands.keys()):
-        command = cli.get_command(ctx, name)
-        if command is None or command.hidden:
-            continue
-        parts.append(f"\n=== opensre {name} --help ===\n")
-        parts.append(_format_command_reference(command, path=f"opensre {name}"))
+    with click.Context(cli, info_name="opensre") as ctx:
+        for name in sorted(cli.commands.keys()):
+            command = cli.get_command(ctx, name)
+            if command is None or command.hidden:
+                continue
+            parts.append(f"\n=== opensre {name} --help ===\n")
+            parts.append(_format_command_reference(command, path=f"opensre {name}"))
 
     parts.append("\n=== Interactive-shell slash commands ===\n")
     parts.append(_interactive_shell_slash_hints())
