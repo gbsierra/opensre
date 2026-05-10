@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import sys
 import time
-from collections.abc import Callable, Iterator
-from typing import Any
+from collections.abc import Iterator
+from itertools import chain
 
 from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 from rich.live import Live
-from rich.markdown import Markdown
 from rich.spinner import Spinner
 from rich.text import Text
 
+from app.cli.interactive_shell.streaming_markdown import (
+    console_file_supports_streamdown,
+    render_final_markdown,
+    render_streamdown_markdown,
+)
 from app.cli.interactive_shell.theme import BOLD_BRAND, DIM, HIGHLIGHT, MARKDOWN_THEME
 from app.cli.support.prompt_support import CTRL_C_DOUBLE_PRESS_WINDOW_S
 
@@ -25,62 +29,30 @@ else:
         """Only the Windows prompt_toolkit stack raises this concrete type."""
 
 
+_STREAM_CANCEL_HINT = "Press Ctrl+C again to stop"
 _SPINNER_NAME = "dots12"
 _SPINNER_COLOR = HIGHLIGHT
 _SPINNER_LABEL = "thinking"
-_LIVE_REFRESH_PER_SECOND = 10
-# Cap how often we re-parse the accumulated buffer as Markdown. Without this,
-# every incoming chunk triggers a full Markdown(buffer) parse, so a 10k-token
-# response performs ~10k full re-parses of a growing string — O(n²) total work
-# that visibly stalls long streams. Re-render at most refresh-rate times per
-# second; final flush at end ensures the last chunks always land.
-_LIVE_RENDER_INTERVAL_S = 1.0 / _LIVE_REFRESH_PER_SECOND
-_STREAM_CANCEL_HINT = "Press Ctrl+C again to stop"
+_SPINNER_REFRESH_PER_SECOND = 10
 
 STREAM_LABEL_ASSISTANT = "assistant"
 STREAM_LABEL_ANSWER = "answer"
 
 
 def _console_file_is_a_tty(console: Console) -> bool:
-    """True only when Rich is writing to a real TTY (not StringIO / pytest capture).
+    """True only when Rich is writing to a real TTY, not StringIO capture."""
 
-    ``force_terminal=True`` sets ``is_terminal`` but does not provide a Windows
-    console buffer; ``patch_stdout`` + ``Live`` then raise
-    ``NoConsoleScreenBufferError`` on ``windows-latest``.
-    """
     out = console.file
     isatty = getattr(out, "isatty", None)
     return bool(isatty and isatty())
 
 
-def _run_throttled_markdown_loop(
-    *,
-    set_view: Callable[[Any], None],
-    chunks_iter: Iterator[str],
-    buffer: list[str],
-    next_chunk: Callable[[Iterator[str]], str | None],
-) -> None:
-    last_render = 0.0
-    try:
-        if buffer:
-            set_view(Markdown("".join(buffer), code_theme="ansi_dark"))
-            last_render = time.monotonic()
-        while True:
-            chunk = next_chunk(chunks_iter)
-            if chunk is None:
-                break
-            if not chunk:
-                continue
-            buffer.append(chunk)
-            now = time.monotonic()
-            if now - last_render >= _LIVE_RENDER_INTERVAL_S:
-                set_view(Markdown("".join(buffer), code_theme="ansi_dark"))
-                last_render = now
-    finally:
-        if buffer:
-            set_view(Markdown("".join(buffer), code_theme="ansi_dark"))
-        else:
-            set_view(Text(""))
+def _build_waiting_spinner() -> Spinner:
+    return Spinner(
+        _SPINNER_NAME,
+        text=Text(f"{_SPINNER_LABEL}…", style=f"bold {_SPINNER_COLOR}"),
+        style=f"bold {_SPINNER_COLOR}",
+    )
 
 
 def stream_to_console(
@@ -92,16 +64,13 @@ def stream_to_console(
 ) -> str:
     """Render a streaming LLM response live and return the accumulated text.
 
-    Uses patch_stdout so prompt_toolkit keeps the input frame rendered at the
-    bottom of the terminal while output streams above it.
-
-    Works when ``console.file`` is a real TTY; ``StringIO`` / CI capture and
-    Windows environments without a console screen buffer fall back to the same
-    throttle + Markdown rendering via plain prints (no ``Live`` / raw console).
+    Real terminal output uses a streaming Markdown renderer. Captured output,
+    pipes, and test StringIO consoles drain the stream and render Markdown
+    once at the end so they avoid terminal-control artifacts.
 
     ``suppress_if_starts_with`` allows callers to skip live rendering when the
-    initial non-whitespace token indicates machine-readable payloads (for
-    example JSON action plans).
+    initial non-whitespace token indicates machine-readable payloads, such as
+    JSON action plans.
     """
     if not console.is_terminal:
         text = "".join(chunks)
@@ -113,7 +82,7 @@ def stream_to_console(
             console.print()
             console.print(f"[{BOLD_BRAND}]{label}:[/]")
             with console.use_theme(MARKDOWN_THEME):
-                console.print(Markdown(text, code_theme="ansi_dark"))
+                render_final_markdown(console, text)
             console.print()
         return text
 
@@ -142,11 +111,17 @@ def stream_to_console(
             except KeyboardInterrupt:
                 _note_stream_interrupt()
 
-    if suppress_if_starts_with is not None:
+    def _read_initial_response() -> str | None:
+        if suppress_if_starts_with is None:
+            chunk = _next_chunk(chunks_iter)
+            if chunk is not None:
+                peeked.append(chunk)
+            return None
+
         while True:
             chunk = _next_chunk(chunks_iter)
             if chunk is None:
-                break
+                return None
             peeked.append(chunk)
             stripped = "".join(peeked).lstrip()
             if not stripped:
@@ -159,14 +134,46 @@ def stream_to_console(
                         break
                     drained.append(rest)
                 return "".join(peeked) + "".join(drained)
-            break
+            return None
 
-    buffer: list[str] = list(peeked)
-    spinner = Spinner(
-        _SPINNER_NAME,
-        text=Text(f"{_SPINNER_LABEL}…", style=f"bold {_SPINNER_COLOR}"),
-        style=f"bold {_SPINNER_COLOR}",
-    )
+    if _console_file_is_a_tty(console):
+        try:
+            with (
+                patch_stdout(raw=True),
+                Live(
+                    _build_waiting_spinner(),
+                    console=console,
+                    refresh_per_second=_SPINNER_REFRESH_PER_SECOND,
+                    transient=True,
+                ),
+            ):
+                suppressed_text = _read_initial_response()
+        except NoConsoleScreenBufferError:
+            suppressed_text = _read_initial_response()
+    else:
+        suppressed_text = _read_initial_response()
+    if suppressed_text is not None:
+        return suppressed_text
+
+    render_chunks_iter = chain(peeked, chunks_iter)
+    buffer: list[str] = []
+
+    def _record_chunk(chunk: str) -> None:
+        buffer.append(chunk)
+
+    def _drain_to_buffer() -> None:
+        while True:
+            chunk = _next_chunk(render_chunks_iter)
+            if chunk is None:
+                break
+            if chunk:
+                buffer.append(chunk)
+
+    def _drain_and_render_final() -> None:
+        try:
+            _drain_to_buffer()
+        finally:
+            render_final_markdown(console, "".join(buffer))
 
     console.print()
     console.print(f"[{BOLD_BRAND}]{label}:[/]")
@@ -174,61 +181,27 @@ def stream_to_console(
     started = time.monotonic()
     try:
         with console.use_theme(MARKDOWN_THEME):
-
-            def _print_markdown_view(renderable: Any) -> None:
-                if isinstance(renderable, Markdown):
-                    console.print(renderable)
-
-            def _live_kwargs() -> dict[str, Any]:
-                return {
-                    "console": console,
-                    "refresh_per_second": _LIVE_REFRESH_PER_SECOND,
-                    "transient": False,
-                    "vertical_overflow": "visible",
-                }
-
-            def _run_throttled_with_live(*, wrap_patch_stdout: bool) -> None:
-                if wrap_patch_stdout:
-                    with (
-                        patch_stdout(raw=True),
-                        Live(spinner, **_live_kwargs()) as live_ref,
-                    ):
-                        _run_throttled_markdown_loop(
-                            set_view=live_ref.update,
-                            chunks_iter=chunks_iter,
-                            buffer=buffer,
+            if console_file_supports_streamdown(console):
+                try:
+                    if _console_file_is_a_tty(console):
+                        with patch_stdout(raw=True):
+                            render_streamdown_markdown(
+                                console=console,
+                                chunks_iter=render_chunks_iter,
+                                next_chunk=_next_chunk,
+                                on_chunk=_record_chunk,
+                            )
+                    else:
+                        render_streamdown_markdown(
+                            console=console,
+                            chunks_iter=render_chunks_iter,
                             next_chunk=_next_chunk,
+                            on_chunk=_record_chunk,
                         )
-                else:
-                    with Live(spinner, **_live_kwargs()) as live_ref:
-                        _run_throttled_markdown_loop(
-                            set_view=live_ref.update,
-                            chunks_iter=chunks_iter,
-                            buffer=buffer,
-                            next_chunk=_next_chunk,
-                        )
-
-            wrap_patch_stdout = _console_file_is_a_tty(console)
-            try:
-                _run_throttled_with_live(wrap_patch_stdout=wrap_patch_stdout)
-            except NoConsoleScreenBufferError:
-                if wrap_patch_stdout:
-                    try:
-                        _run_throttled_with_live(wrap_patch_stdout=False)
-                    except NoConsoleScreenBufferError:
-                        _run_throttled_markdown_loop(
-                            set_view=_print_markdown_view,
-                            chunks_iter=chunks_iter,
-                            buffer=buffer,
-                            next_chunk=_next_chunk,
-                        )
-                else:
-                    _run_throttled_markdown_loop(
-                        set_view=_print_markdown_view,
-                        chunks_iter=chunks_iter,
-                        buffer=buffer,
-                        next_chunk=_next_chunk,
-                    )
+                except NoConsoleScreenBufferError:
+                    _drain_and_render_final()
+            else:
+                _drain_and_render_final()
         if buffer:
             console.print(f"[{DIM}]· {time.monotonic() - started:.1f}s[/]")
     finally:
