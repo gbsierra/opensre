@@ -8,31 +8,34 @@ import sys
 from collections.abc import Callable
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 from rich.markup import escape
 
+import app.cli.interactive_shell.orchestration.agent_actions as _agent_actions
 from app.agents.sweep import run_startup_sweep
 from app.analytics.cli import capture_terminal_turn_summarized
 from app.analytics.events import Event
 from app.analytics.provider import get_analytics
-from app.cli.interactive_shell.agent_actions import execute_cli_actions_with_metrics
-from app.cli.interactive_shell.banner import render_banner
-from app.cli.interactive_shell.cli_agent import answer_cli_agent
-from app.cli.interactive_shell.cli_help import answer_cli_help
-from app.cli.interactive_shell.commands import dispatch_slash
+from app.cli.interactive_shell import commands as _commands
+from app.cli.interactive_shell.chat import cli_agent as _cli_agent
+from app.cli.interactive_shell.chat import cli_help as _cli_help
 from app.cli.interactive_shell.config import ReplConfig
-from app.cli.interactive_shell.follow_up import answer_follow_up
-from app.cli.interactive_shell.prompt_surface import (
-    _build_prompt_session,
-    _prompt_message,
-    render_submitted_prompt,
-)
-from app.cli.interactive_shell.router import route_input
-from app.cli.interactive_shell.session import ReplSession
-from app.cli.interactive_shell.theme import DIM, ERROR, WARNING
+from app.cli.interactive_shell.prompting import follow_up as _follow_up
+from app.cli.interactive_shell.prompting import prompt_surface as _prompt_surface
+from app.cli.interactive_shell.routing import router as _router
+from app.cli.interactive_shell.runtime import HotReloadCoordinator, ReplSession, TaskRegistry
+from app.cli.interactive_shell.ui import DIM, ERROR, WARNING, render_banner
 from app.cli.support.errors import OpenSREError
 from app.cli.support.exception_reporting import report_exception
 from app.cli.support.prompt_support import repl_prompt_note_ctrl_c, repl_reset_ctrl_c_gate
+from app.llm_reasoning_effort import apply_reasoning_effort
+
+_build_prompt_session = _prompt_surface._build_prompt_session
+_prompt_message = _prompt_surface._prompt_message
+route_input = _router.route_input
+answer_cli_help = _cli_help.answer_cli_help
+dispatch_slash = _commands.dispatch_slash
 
 _INTERVENTION_CORRECTION_RE = re.compile(
     r"("
@@ -70,11 +73,11 @@ def _run_new_alert(
     is_tty: bool | None = None,
 ) -> None:
     """Dispatch a free-text alert description to the streaming pipeline."""
-    from app.cli.interactive_shell.execution_policy import (
+    from app.cli.interactive_shell.orchestration.execution_policy import (
         evaluate_investigation_launch,
         execution_allowed,
     )
-    from app.cli.interactive_shell.tasks import TaskKind
+    from app.cli.interactive_shell.runtime.tasks import TaskKind
     from app.cli.investigation import run_investigation_for_session
 
     policy = evaluate_investigation_launch(action_type="investigation")
@@ -89,14 +92,15 @@ def _run_new_alert(
         session.record("alert", text, ok=False)
         return
 
-    task = session.task_registry.create(TaskKind.INVESTIGATION)
+    task = session.task_registry.create(TaskKind.INVESTIGATION, command="free-text investigation")
     task.mark_running()
     try:
-        final_state = run_investigation_for_session(
-            alert_text=text,
-            context_overrides=session.accumulated_context or None,
-            cancel_requested=task.cancel_requested,
-        )
+        with apply_reasoning_effort(session.reasoning_effort):
+            final_state = run_investigation_for_session(
+                alert_text=text,
+                context_overrides=session.accumulated_context or None,
+                cancel_requested=task.cancel_requested,
+            )
     except KeyboardInterrupt:
         task.mark_cancelled()
         session.record_intervention("ctrl_c")
@@ -130,11 +134,19 @@ async def _run_one_turn(
     prompt: PromptSession[str],
     session: ReplSession,
     console: Console,
+    hot_reloader: HotReloadCoordinator | None = None,
 ) -> bool:
     """Read one line of input and dispatch. Returns False to exit."""
+    if hot_reloader is not None:
+        hot_reloader.check_and_reload(console)
+
     while True:
         try:
-            text = await prompt.prompt_async(lambda: _prompt_message(session))
+            with patch_stdout(raw=True):
+                text = await prompt.prompt_async(
+                    lambda: _prompt_message(session),
+                    default=session.take_pending_prompt_default(),
+                )
         except EOFError:
             console.print()
             return False
@@ -150,7 +162,7 @@ async def _run_one_turn(
     if not text:
         return True
 
-    render_submitted_prompt(console, session, text)
+    _prompt_surface.render_submitted_prompt(console, session, text)
 
     decision = route_input(text, session)
     kind = decision.route_kind.value
@@ -163,7 +175,7 @@ async def _run_one_turn(
         session.record_intervention("correction")
     if kind == "slash":
         # Rewrite bare-word commands to their slash form before dispatch.
-        cmd_text = text if text.startswith("/") else f"/{text}"
+        cmd_text = _router.slash_dispatch_text(text)
         try:
             should_continue = dispatch_slash(cmd_text, session, console)
         except Exception as exc:
@@ -176,12 +188,13 @@ async def _run_one_turn(
         return should_continue
 
     if kind == "cli_help":
-        answer_cli_help(text, session, console)
+        with apply_reasoning_effort(session.reasoning_effort):
+            answer_cli_help(text, session, console)
         session.record("cli_help", text)
         return True
 
     if kind == "cli_agent":
-        turn = execute_cli_actions_with_metrics(text, session, console)
+        turn = _agent_actions.execute_cli_actions_with_metrics(text, session, console)
         fallback_to_llm = not turn.handled
         snapshot = session.record_terminal_turn(
             executed_count=turn.executed_count,
@@ -200,7 +213,8 @@ async def _run_one_turn(
         )
         if turn.handled:
             return True
-        answer_cli_agent(text, session, console)
+        with apply_reasoning_effort(session.reasoning_effort):
+            _cli_agent.answer_cli_agent(text, session, console)
         session.record("cli_agent", text)
         return True
 
@@ -209,7 +223,8 @@ async def _run_one_turn(
         return True
 
     # follow_up — grounded answer against session.last_state
-    answer_follow_up(text, session, console)
+    with apply_reasoning_effort(session.reasoning_effort):
+        _follow_up.answer_follow_up(text, session, console)
     session.record("follow_up", text)
     return True
 
@@ -219,23 +234,30 @@ async def _repl_main(initial_input: str | None = None, _config: ReplConfig | Non
     # prompt_toolkit has claimed and released stdout for input handling.
     # Without this, slash-command output after the first prompt renders as
     # literal escape codes in some terminal emulators.
-    console = Console(highlight=False, force_terminal=True, color_system="truecolor")
+    console = Console(
+        highlight=False, force_terminal=True, color_system="truecolor", legacy_windows=False
+    )
     render_banner(console)
     # Prune dead-PID agent records and stale lockfiles before the user's
     # first ``/agents`` call. Errors are caught inside; a sweep failure
     # must never prevent the REPL from starting.
     run_startup_sweep()
+    cfg = _config or ReplConfig.load()
     session = ReplSession()
+    session.task_registry = TaskRegistry.persistent()
     prompt = _build_prompt_session()
     session.prompt_history_backend = prompt.history
+    hot_reloader = HotReloadCoordinator() if cfg.reload else None
 
     # Allow a single pre-seeded input for test harnesses
     if initial_input:
         for line in initial_input.splitlines():
+            if hot_reloader is not None:
+                hot_reloader.check_and_reload(console)
             stripped = line.strip()
             if not stripped:
                 continue
-            render_submitted_prompt(console, session, stripped)
+            _prompt_surface.render_submitted_prompt(console, session, stripped)
 
             decision = route_input(stripped, session)
             kind = decision.route_kind.value
@@ -245,15 +267,16 @@ async def _repl_main(initial_input: str | None = None, _config: ReplConfig | Non
                 decision.to_event_payload(),
             )
             if kind == "slash":
-                cmd_text = stripped if stripped.startswith("/") else f"/{stripped}"
+                cmd_text = _router.slash_dispatch_text(stripped)
                 if not dispatch_slash(cmd_text, session, console):
                     return 0
                 console.print()
             elif kind == "cli_help":
-                answer_cli_help(stripped, session, console)
+                with apply_reasoning_effort(session.reasoning_effort):
+                    answer_cli_help(stripped, session, console)
                 session.record("cli_help", stripped)
             elif kind == "cli_agent":
-                turn = execute_cli_actions_with_metrics(stripped, session, console)
+                turn = _agent_actions.execute_cli_actions_with_metrics(stripped, session, console)
                 fallback_to_llm = not turn.handled
                 snapshot = session.record_terminal_turn(
                     executed_count=turn.executed_count,
@@ -271,16 +294,18 @@ async def _repl_main(initial_input: str | None = None, _config: ReplConfig | Non
                     session_fallback_rate_percent=snapshot.fallback_rate_percent,
                 )
                 if not turn.handled:
-                    answer_cli_agent(stripped, session, console)
+                    with apply_reasoning_effort(session.reasoning_effort):
+                        _cli_agent.answer_cli_agent(stripped, session, console)
                     session.record("cli_agent", stripped)
             elif kind == "new_alert":
                 _run_new_alert(stripped, session, console)
             else:
-                answer_follow_up(stripped, session, console)
+                with apply_reasoning_effort(session.reasoning_effort):
+                    _follow_up.answer_follow_up(stripped, session, console)
                 session.record("follow_up", stripped)
 
     while True:
-        should_continue = await _run_one_turn(prompt, session, console)
+        should_continue = await _run_one_turn(prompt, session, console, hot_reloader)
         if not should_continue:
             return 0
 

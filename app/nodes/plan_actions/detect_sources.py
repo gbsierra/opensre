@@ -162,6 +162,20 @@ def _extract_issue_id_from_url(value: str) -> str:
     return parts[index + 1].strip()
 
 
+def _extract_incident_io_id_from_url(value: str) -> str:
+    parsed = urlparse(value.strip())
+    host = (parsed.hostname or "").lower()
+    if host != "incident.io" and not host.endswith(".incident.io"):
+        return ""
+    parts = [part for part in parsed.path.split("/") if part]
+    if "incidents" not in parts:
+        return ""
+    index = parts.index("incidents")
+    if index + 1 >= len(parts):
+        return ""
+    return parts[index + 1].strip()
+
+
 def detect_sources(
     raw_alert: dict[str, Any] | str,
     context: dict[str, Any],
@@ -533,6 +547,18 @@ def detect_sources(
         if has_backend or (endpoint and (api_key or grafana_local)):
             service_name = _map_pipeline_to_service_name(pipeline_name) if pipeline_name else ""
 
+            # Suppress Grafana traces for RDS/database resource-threshold alerts.
+            # Distributed traces (Tempo) contain no useful data for infrastructure
+            # ceiling breaches (connections, CPU, storage, IOPS). Tagging this in
+            # source detection rather than in the prompt so the flag is always
+            # consistent regardless of which prompt path fires.
+            _is_rds_alert = bool(
+                annotations.get("rds_failure_mode")
+                or annotations.get("db_instance_identifier")
+                or annotations.get("db_instance")
+                or str(common_labels.get("service", "")).lower() == "rds"
+            )
+
             grafana_params: dict[str, Any] = {
                 "service_name": service_name,
                 "pipeline_name": pipeline_name,
@@ -541,6 +567,7 @@ def detect_sources(
                 "grafana_api_key": api_key,
                 "time_range_minutes": alert_time_range_minutes,
                 "loki_only": grafana_local,  # signals no Tempo/Prometheus in local stack
+                "no_traces": _is_rds_alert,  # hard-suppress traces for RDS incidents
             }
             if execution_run_id:
                 grafana_params["execution_run_id"] = execution_run_id
@@ -1397,6 +1424,74 @@ def detect_sources(
             "connection_verified": True,
         }
 
+    helm_int = (resolved_integrations or {}).get("helm")
+    if helm_int:
+        alert_dict: dict[str, Any] = raw_alert if isinstance(raw_alert, dict) else {}
+        merged_labels: dict[str, Any] = {}
+        merged_labels.update(alert_dict.get("commonLabels", {}) or {})
+        merged_labels.update(alert_dict.get("labels", {}) or {})
+
+        release_name = str(
+            annotations.get("helm_release")
+            or annotations.get("helm_release_name")
+            or merged_labels.get("meta.helm.sh/release-name")
+            or alert_dict.get("helm_release", "")
+            or alert_dict.get("helm_release_name", "")
+        ).strip()
+        ann_keys = {str(k).lower() for k in annotations}
+        helm_annotation_hit = any(
+            k in ann_keys
+            for k in (
+                "helm_release",
+                "helm_release_name",
+                "helm_chart",
+                "helm_revision",
+                "helm_namespace",
+            )
+        ) or any(str(k).lower().startswith("meta.helm.sh/") for k in annotations)
+        helm_hint_text = " ".join(
+            str(value)
+            for value in (
+                alert_dict.get("alert_name", ""),
+                alert_dict.get("error_message", ""),
+                annotations.get("summary", ""),
+                annotations.get("description", ""),
+                annotations.get("message", ""),
+            )
+            if value
+        ).lower()
+        helm_markers = (
+            "helm release",
+            "helm chart",
+            "helm upgrade",
+            "helm rollback",
+            "helm install",
+            "helm uninstall",
+            "failed helm",
+            " helm ",
+        )
+        has_helm_phrase = any(marker in helm_hint_text for marker in helm_markers)
+        if release_name or helm_annotation_hit or has_helm_phrase:
+            ns_hint = str(
+                annotations.get("helm_namespace")
+                or annotations.get("k8s_namespace")
+                or annotations.get("kubernetes_namespace")
+                or merged_labels.get("meta.helm.sh/release-namespace")
+                or alert_dict.get("helm_namespace", "")
+                or helm_int.get("default_namespace", "")
+                or ""
+            ).strip()
+            sources["helm"] = {
+                "helm_path": str(helm_int.get("helm_path", "helm") or "helm").strip() or "helm",
+                "kube_context": str(helm_int.get("kube_context", "")).strip(),
+                "kubeconfig": str(helm_int.get("kubeconfig", "")).strip(),
+                "default_namespace": str(helm_int.get("default_namespace", "")).strip(),
+                "release_name": release_name,
+                "namespace": ns_hint,
+                "integration_id": str(helm_int.get("integration_id", "")).strip(),
+                "connection_verified": True,
+            }
+
     argocd_int = (resolved_integrations or {}).get("argocd")
     if argocd_int and str(argocd_int.get("base_url", "")).strip():
         application_name = str(
@@ -1499,6 +1594,33 @@ def detect_sources(
             "alert_id": alert_id,
             "query": opsgenie_query,
             "connection_verified": True,
+        }
+
+    incident_io_int = (resolved_integrations or {}).get("incident_io")
+    if incident_io_int and str(incident_io_int.get("api_key", "")).strip():
+        incident_id = str(
+            annotations.get("incident_io_incident_id")
+            or raw_alert.get("incident_io_incident_id", "")
+        ).strip()
+        if not incident_id:
+            incident_url = str(
+                annotations.get("incident_io_url")
+                or annotations.get("incident_url")
+                or raw_alert.get("incident_url", "")
+            ).strip()
+            incident_id = _extract_incident_io_id_from_url(incident_url)
+
+        sources["incident_io"] = {
+            "api_key": str(incident_io_int.get("api_key", "")).strip(),
+            "base_url": str(incident_io_int.get("base_url", "")).strip(),
+            "incident_id": incident_id,
+            "status_category": str(
+                annotations.get("incident_io_status_category")
+                or raw_alert.get("incident_io_status_category", "")
+                or "live"
+            ).strip(),
+            "connection_verified": True,
+            "integration_id": str(incident_io_int.get("integration_id", "")).strip(),
         }
 
     jira_int = (resolved_integrations or {}).get("jira")

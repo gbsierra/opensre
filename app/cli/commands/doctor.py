@@ -9,7 +9,7 @@ Rendered output (colour roles):
   ✓  env_file        .env (12 keys)
   ⚠  integrations    no integrations         [WARNING ⚠]
   ✗  llm_provider    ANTHROPIC_API_KEY unset [ERROR ✗]
-  ✓  version         2026.4.7 (up to date)
+  ✓  version         <version> (up to date)
   ✓  network         github.com reachable
 
 ──────────────────────────────────────────── [DIM rule]
@@ -31,7 +31,7 @@ from rich.console import Console
 from rich.rule import Rule
 from rich.text import Text
 
-from app.cli.interactive_shell.theme import (
+from app.cli.interactive_shell.ui.theme import (
     DIM,
     ERROR,
     GLYPH_ERROR,
@@ -244,7 +244,12 @@ def doctor_command() -> None:
     if is_json_output():
         click.echo(json.dumps(results, indent=2))
     else:
-        console = Console(highlight=False, force_terminal=True, color_system="truecolor")
+        console = Console(
+            highlight=False,
+            force_terminal=True,
+            color_system="truecolor",
+            legacy_windows=False,
+        )
         _render_doctor_results(console, results)
 
     has_errors = any(r["status"] == "error" for r in results)
