@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import re
 from collections.abc import Iterator
+from contextlib import nullcontext
 
 import pytest
 from rich.console import Console
@@ -190,7 +191,7 @@ class TestTimingFooter:
         )
 
         output = _strip_ansi(buf.getvalue())
-        assert re.search(r".\s+\d+\.\d+s", output) is not None
+        assert re.search(r"·\s+\d+\.\d+s", output) is not None
 
     def test_footer_skipped_when_stream_is_empty(self) -> None:
         console, buf = _tty_console()
@@ -201,7 +202,7 @@ class TestTimingFooter:
         )
 
         output = _strip_ansi(buf.getvalue())
-        assert re.search(r".\s+\d+\.\d+s", output) is None
+        assert re.search(r"·\s+\d+\.\d+s", output) is None
 
     def test_footer_skipped_when_response_is_suppressed(self) -> None:
         console, buf = _tty_console()
@@ -213,7 +214,7 @@ class TestTimingFooter:
         )
 
         output = _strip_ansi(buf.getvalue())
-        assert re.search(r".\s+\d+\.\d+s", output) is None
+        assert re.search(r"·\s+\d+\.\d+s", output) is None
 
 
 class TestSuppressionPeek:
@@ -307,7 +308,7 @@ class TestRendererSelection:
             console.print("streamdown-rendered")
 
         monkeypatch.setattr(streaming_module, "console_file_supports_streamdown", lambda _: True)
-        monkeypatch.setattr(streaming_module, "_console_file_is_a_tty", lambda _: False)
+        monkeypatch.setattr(streaming_module, "patch_stdout", lambda **_kwargs: nullcontext())
         monkeypatch.setattr(streaming_module, "render_streamdown_markdown", fake_streamdown)
 
         console, buf = _tty_console()

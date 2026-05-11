@@ -183,15 +183,7 @@ def stream_to_console(
         with console.use_theme(MARKDOWN_THEME):
             if console_file_supports_streamdown(console):
                 try:
-                    if _console_file_is_a_tty(console):
-                        with patch_stdout(raw=True):
-                            render_streamdown_markdown(
-                                console=console,
-                                chunks_iter=render_chunks_iter,
-                                next_chunk=_next_chunk,
-                                on_chunk=_record_chunk,
-                            )
-                    else:
+                    with patch_stdout(raw=True):
                         render_streamdown_markdown(
                             console=console,
                             chunks_iter=render_chunks_iter,
