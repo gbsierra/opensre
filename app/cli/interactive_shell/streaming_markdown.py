@@ -92,8 +92,10 @@ def render_streamdown_markdown(
     renderer = Streamdown()
     renderer.setup(H=_STREAMDOWN_GREEN_HUE, V=_STREAMDOWN_GREEN_VALUE)
     with redirect_stdout(console.file):
-        renderer.render(stream)
-        renderer.tidyup()
+        try:
+            renderer.render(stream)
+        finally:
+            renderer.tidyup()
 
 
 def render_final_markdown(console: Console, text: str) -> None:
