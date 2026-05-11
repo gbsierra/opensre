@@ -136,6 +136,7 @@ def stream_to_console(
                 return "".join(peeked) + "".join(drained)
             return None
 
+    suppressed_text: str | None = None
     if _console_file_is_a_tty(console):
         try:
             with (
@@ -149,7 +150,8 @@ def stream_to_console(
             ):
                 suppressed_text = _read_initial_response()
         except NoConsoleScreenBufferError:
-            suppressed_text = _read_initial_response()
+            if not peeked:
+                suppressed_text = _read_initial_response()
     else:
         suppressed_text = _read_initial_response()
     if suppressed_text is not None:

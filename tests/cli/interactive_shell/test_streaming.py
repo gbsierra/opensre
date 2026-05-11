@@ -261,6 +261,38 @@ class TestSuppressionPeek:
         output = _strip_ansi(buf.getvalue())
         assert "assistant:" not in output
 
+    def test_live_exit_error_does_not_re_read_suppressed_payload(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.cli.interactive_shell import streaming as streaming_module
+
+        class RaisingLive:
+            def __init__(self, *_args, **_kwargs) -> None:
+                pass
+
+            def __enter__(self) -> RaisingLive:
+                return self
+
+            def __exit__(self, *_args) -> None:
+                raise streaming_module.NoConsoleScreenBufferError()
+
+        monkeypatch.setattr(streaming_module, "_console_file_is_a_tty", lambda _: True)
+        monkeypatch.setattr(streaming_module, "patch_stdout", lambda **_kwargs: nullcontext())
+        monkeypatch.setattr(streaming_module, "Live", RaisingLive)
+
+        console, buf = _tty_console()
+        result = stream_to_console(
+            console,
+            label="assistant",
+            chunks=_yield_chunks(['{"actions"', ":[]", "}"]),
+            suppress_if_starts_with="{",
+        )
+
+        assert result == '{"actions":[]}'
+        output = _strip_ansi(buf.getvalue())
+        assert "assistant:" not in output
+        assert '{"actions"' not in output
+
 
 class TestRendererSelection:
     """The shared helper chooses one renderer path without repainting snapshots."""
