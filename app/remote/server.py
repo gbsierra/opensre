@@ -76,8 +76,19 @@ _INSTANCE_METADATA: dict[str, str | None] = {
     "region": os.getenv("AWS_REGION") or None,
     "public_ip": None,
 }
+# Process-local dedup. This mainly protects long-lived remote servers from
+# reporting the same fallback failure every health cycle.
 _REPORTED_REMOTE_EVENTS: set[tuple[str, str]] = set()
 logger = logging.getLogger(__name__)
+
+
+def _remote_report_key(event: str, extras: dict[str, Any] | None = None) -> tuple[str, str]:
+    return (event, str(extras or ""))
+
+
+def _mark_remote_recovered(event: str, extras: dict[str, Any] | None = None) -> None:
+    """Allow a future failure to report after the matching probe recovers."""
+    _REPORTED_REMOTE_EVENTS.discard(_remote_report_key(event, extras))
 
 
 def _report_remote_once(
@@ -90,7 +101,7 @@ def _report_remote_once(
     extras: dict[str, Any] | None = None,
 ) -> None:
     """Report noisy remote fallbacks once per process and event/detail key."""
-    dedupe_key = (event, str(extras or ""))
+    dedupe_key = _remote_report_key(event, extras)
     if dedupe_key in _REPORTED_REMOTE_EVENTS:
         return
     _REPORTED_REMOTE_EVENTS.add(dedupe_key)
@@ -632,7 +643,9 @@ def _imds_token() -> str | None:
     )
     try:
         with urllib.request.urlopen(req, timeout=0.3) as response:
-            return response.read().decode("utf-8").strip() or None
+            token = response.read().decode("utf-8").strip() or None
+            _mark_remote_recovered("imds_token_fetch_failed")
+            return token
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         _report_remote_once(
             exc,
@@ -647,9 +660,12 @@ def _imds_token() -> str | None:
 def _imds_get(path: str, *, token: str | None) -> str | None:
     headers = {"X-aws-ec2-metadata-token": token} if token else {}
     req = urllib.request.Request(f"http://169.254.169.254/{path}", headers=headers)
+    extras = {"imds_path": path}
     try:
         with urllib.request.urlopen(req, timeout=0.3) as response:
-            return response.read().decode("utf-8").strip() or None
+            value = response.read().decode("utf-8").strip() or None
+            _mark_remote_recovered("imds_metadata_fetch_failed", extras)
+            return value
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         _report_remote_once(
             exc,
@@ -657,7 +673,7 @@ def _imds_get(path: str, *, token: str | None) -> str | None:
             event="imds_metadata_fetch_failed",
             message=f"IMDS metadata fetch failed for {path}",
             severity="info",
-            extras={"imds_path": path},
+            extras=extras,
         )
         return None
 
@@ -677,6 +693,10 @@ def _check_llm_connectivity() -> DeepHealthCheck:
 
         bedrock = boto3.client("bedrock", region_name=region)
         bedrock.list_foundation_models(byProvider="Anthropic")
+        _mark_remote_recovered(
+            "llm_connectivity_check_failed",
+            {"provider": provider, "region": region},
+        )
         return DeepHealthCheck(
             name="Bedrock connectivity",
             status="passed",
