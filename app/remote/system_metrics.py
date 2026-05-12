@@ -7,6 +7,7 @@ endpoint degrades gracefully on any platform.
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import shutil
@@ -17,12 +18,32 @@ import time
 from pathlib import Path
 from typing import Any
 
+from app.remote.error_reporting import report_remote_exception
+
+logger = logging.getLogger(__name__)
+_REPORTED_METRIC_EVENTS: set[str] = set()
+
 _resource: Any | None
 
 try:
     import resource as _resource
 except ModuleNotFoundError:
     _resource = None
+
+
+def _report_metric_failure(exc: BaseException, *, event: str, message: str) -> None:
+    """Report noisy metric collection failures once per process."""
+    if event in _REPORTED_METRIC_EVENTS:
+        return
+    _REPORTED_METRIC_EVENTS.add(event)
+    report_remote_exception(
+        exc,
+        logger=logger,
+        component="system_metrics",
+        event=event,
+        message=message,
+        severity="info",
+    )
 
 
 def collect_system_metrics() -> dict[str, Any]:
@@ -75,7 +96,12 @@ def _collect_cpu() -> dict[str, Any] | None:
             "load_avg_15m": round(load15, 2),
             "core_count": os.cpu_count() or 1,
         }
-    except OSError:
+    except OSError as exc:
+        _report_metric_failure(
+            exc,
+            event="cpu_collection_failed",
+            message="CPU metrics collection failed",
+        )
         return None
 
 
@@ -90,7 +116,12 @@ def _collect_memory() -> dict[str, Any] | None:
             return _memory_linux()
         if sys.platform == "darwin":
             return _memory_darwin()
-    except Exception:
+    except Exception as exc:
+        _report_metric_failure(
+            exc,
+            event="memory_collection_failed",
+            message="Memory metrics collection failed",
+        )
         return None
     return None
 
@@ -156,7 +187,12 @@ def _collect_disk() -> dict[str, Any] | None:
             "free_gb": free_gb,
             "percent": percent,
         }
-    except OSError:
+    except OSError as exc:
+        _report_metric_failure(
+            exc,
+            event="disk_collection_failed",
+            message="Disk metrics collection failed",
+        )
         return None
 
 
@@ -171,7 +207,12 @@ def _collect_uptime() -> dict[str, Any] | None:
             return _uptime_linux()
         if sys.platform == "darwin":
             return _uptime_darwin()
-    except Exception:
+    except Exception as exc:
+        _report_metric_failure(
+            exc,
+            event="uptime_collection_failed",
+            message="Uptime metrics collection failed",
+        )
         return None
     return None
 
@@ -244,5 +285,10 @@ def _collect_process() -> dict[str, Any] | None:
             result["open_fds"] = len(list(fd_dir.iterdir()))
 
         return result
-    except Exception:
+    except Exception as exc:
+        _report_metric_failure(
+            exc,
+            event="process_collection_failed",
+            message="Process metrics collection failed",
+        )
         return None
