@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from app.remote import system_metrics as system_metrics_module
 from app.remote.system_metrics import (
     _collect_cpu,
@@ -15,7 +17,8 @@ from app.remote.system_metrics import (
 )
 
 
-def setup_function() -> None:
+@pytest.fixture(autouse=True)
+def _clear_reported_metric_events() -> None:
     system_metrics_module._REPORTED_METRIC_EVENTS.clear()
 
 
