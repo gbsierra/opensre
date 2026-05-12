@@ -457,6 +457,7 @@ def test_check_llm_connectivity_reports_bedrock_failure(monkeypatch: pytest.Monk
 
     monkeypatch.setenv("LLM_PROVIDER", "bedrock")
     monkeypatch.setitem(sys.modules, "boto3", _FakeBoto3)
+    remote_server._REPORTED_REMOTE_EVENTS.clear()
 
     with patch("app.remote.server.report_remote_exception") as report:
         result = _check_llm_connectivity()
