@@ -683,9 +683,8 @@ def _check_llm_connectivity() -> DeepHealthCheck:
             detail=f"Connected to Bedrock in {region}.",
         )
     except Exception as exc:
-        report_remote_exception(
+        _report_remote_once(
             exc,
-            logger=logger,
             component="server",
             event="llm_connectivity_check_failed",
             message=f"Bedrock connectivity check failed in {region}",

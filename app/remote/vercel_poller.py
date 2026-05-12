@@ -312,7 +312,7 @@ def resolve_vercel_config() -> VercelConfig | None:
         return None
     try:
         return VercelConfig.model_validate(config)
-    except Exception as exc:  # pragma: no cover - defensive validation wrapper
+    except Exception as exc:
         report_remote_exception(
             exc,
             logger=logger,

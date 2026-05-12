@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from app.remote import system_metrics as system_metrics_module
 from app.remote.system_metrics import (
     _collect_cpu,
     _collect_disk,
@@ -12,6 +13,10 @@ from app.remote.system_metrics import (
     _humanize_seconds,
     collect_system_metrics,
 )
+
+
+def setup_function() -> None:
+    system_metrics_module._REPORTED_METRIC_EVENTS.clear()
 
 
 class TestCollectSystemMetrics:
