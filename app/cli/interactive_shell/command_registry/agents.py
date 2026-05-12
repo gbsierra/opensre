@@ -11,6 +11,7 @@ import math
 import os
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -438,9 +439,11 @@ def _render_live_tail(console: Console, label: str, sess: AttachSession) -> None
     is the canonical "stop" signal.
     """
     console.print(f"[{BOLD_BRAND}]trace {escape(label)}[/]  [{DIM}]Ctrl+C to stop[/]")
+    isatty = getattr(console.file, "isatty", None)
+    stdout_context = patch_stdout(raw=True) if callable(isatty) and isatty() else nullcontext()
     try:
         with (
-            patch_stdout(raw=True),
+            stdout_context,
             Live(
                 Text(""),
                 console=console,
