@@ -110,11 +110,6 @@ def _cmd_help(_session: ReplSession, console: Console, args: list[str]) -> bool:
         if command is not None:
             render_command_detail(console, command)
             return True
-        section = _find_section(sections, target)
-        if section is not None:
-            section_name, commands = section
-            render_section_detail(console, section_name, commands)
-            return True
         console.print(f"[{ERROR}]unknown help topic:[/] {escape(target)}")
         console.print(
             "Try [bold]/help[/bold], [bold]/help /model[/bold], or [bold]/help tasks[/bold]."

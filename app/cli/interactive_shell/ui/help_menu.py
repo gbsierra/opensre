@@ -406,7 +406,7 @@ def _draw_help_menu(
     return height
 
 
-def choose_help_command(sections: Sequence[HelpSection]) -> SlashCommand | None:
+def choose_help_command(sections: Sequence[HelpSection]) -> None:
     """Let a TTY user browse command details from a grouped viewport."""
     rows = _flatten_help_rows(sections)
     selected = _first_selectable_index(rows)
