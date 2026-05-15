@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from rich.console import Console
 from rich.markup import escape
@@ -25,20 +26,21 @@ from app.cli.interactive_shell.ui.theme import (
     DIM,
     DIM_COUNTER_ANSI,
     HIGHLIGHT,
-    HIGHLIGHT_ANSI,
     MENU_SELECTION_ROW_ANSI,
     PROMPT_ACCENT_ANSI,
+    TEXT_ANSI,
 )
 
 HelpSection = tuple[str, Sequence[SlashCommand]]
 _HELP_VIEW_ROWS = 14
-_HELP_HINT = "↑↓/j/k  Enter toggle details  Esc/q close"
+_HELP_HINT = "↑↓/j/k navigate  ·  Enter/Space toggle details  ·  Esc/q close"
 
 
 @dataclass(frozen=True)
 class HelpRow:
     section: str | None = None
     command: SlashCommand | None = None
+    separator: bool = False
 
     @property
     def selectable(self) -> bool:
@@ -46,11 +48,18 @@ class HelpRow:
 
 
 @dataclass(frozen=True)
+class HelpDetailLine:
+    text: str
+    role: Literal["label", "value"]
+
+
+@dataclass(frozen=True)
 class HelpDisplayRow:
     source_index: int | None = None
     section: str | None = None
     command: SlashCommand | None = None
-    detail: str | None = None
+    detail: HelpDetailLine | None = None
+    separator: bool = False
 
 
 def render_help_index(console: Console, sections: Sequence[HelpSection]) -> None:
@@ -116,6 +125,8 @@ def _flatten_help_rows(sections: Sequence[HelpSection]) -> list[HelpRow]:
     for section_name, commands in sections:
         if not commands:
             continue
+        if rows:
+            rows.append(HelpRow(separator=True))
         rows.append(HelpRow(section=section_name))
         rows.extend(HelpRow(command=command) for command in commands)
     return rows
@@ -139,17 +150,17 @@ def _next_selectable_index(rows: Sequence[HelpRow], current: int, delta: int) ->
     return current
 
 
-def _expanded_detail_lines(command: SlashCommand) -> list[str]:
-    lines: list[str] = []
+def _expanded_detail_lines(command: SlashCommand) -> list[HelpDetailLine]:
+    lines: list[HelpDetailLine] = []
     if command.usage:
-        lines.append("usage:")
-        lines.extend(f"  {item}" for item in command.usage)
+        lines.append(HelpDetailLine("usage:", "label"))
+        lines.extend(HelpDetailLine(f"  {item}", "value") for item in command.usage)
     if command.examples:
-        lines.append("examples:")
-        lines.extend(f"  {item}" for item in command.examples)
+        lines.append(HelpDetailLine("examples:", "label"))
+        lines.extend(HelpDetailLine(f"  {item}", "value") for item in command.examples)
     if command.notes:
-        lines.append("notes:")
-        lines.extend(f"  {item}" for item in command.notes)
+        lines.append(HelpDetailLine("notes:", "label"))
+        lines.extend(HelpDetailLine(f"  {item}", "value") for item in command.notes)
     return lines
 
 
@@ -161,6 +172,7 @@ def _display_rows(rows: Sequence[HelpRow], expanded: int | None) -> list[HelpDis
                 source_index=index,
                 section=row.section,
                 command=row.command,
+                separator=row.separator,
             )
         )
         if expanded == index and row.command is not None:
@@ -250,6 +262,57 @@ def _pad(text: str, width: int) -> str:
     return clipped + (" " * max(0, width - _visible_width(clipped)))
 
 
+def _center(text: str, width: int) -> str:
+    if _visible_width(text) >= width:
+        return text
+    return text.center(width)
+
+
+def _command_name_width(width: int) -> int:
+    return min(18, max(12, width // 3))
+
+
+def _left_column_width(width: int) -> int:
+    return 6 + _command_name_width(width)
+
+
+def _right_column_width(width: int) -> int:
+    return max(0, width - _left_column_width(width) - 2)
+
+
+def _render_grid_row(left: str, right: str, width: int) -> str:
+    left_column = _pad(left, _left_column_width(width))
+    right_column = _clip(right, _right_column_width(width))
+    return _pad(f"{left_column}│ {right_column}", width)
+
+
+def _render_section_row(section: str, width: int) -> str:
+    left_column = _pad(section, _left_column_width(width))
+    right_column = " " * _right_column_width(width)
+    return (
+        f"{BOLD_BRAND_ANSI}{left_column}{ANSI_RESET}"
+        f"{DIM_COUNTER_ANSI}│ {right_column}{ANSI_RESET}"
+    )
+
+
+def _render_detail_row(detail: HelpDetailLine, width: int) -> str:
+    left_column = " " * _left_column_width(width)
+    right_column = _clip(detail.text, _right_column_width(width))
+    right_padding = " " * max(0, _right_column_width(width) - _visible_width(right_column))
+    detail_ansi = TEXT_ANSI if detail.role == "label" else DIM_COUNTER_ANSI
+    return (
+        f"{DIM_COUNTER_ANSI}{left_column}│ {ANSI_RESET}"
+        f"{detail_ansi}{right_column}{right_padding}{ANSI_RESET}"
+    )
+
+
+def _separator_rule(width: int) -> str:
+    column = _left_column_width(width)
+    if column >= width:
+        return "─" * width
+    return f"{'─' * column}┼{'─' * max(0, width - column - 1)}"
+
+
 def _render_command_row(
     command: SlashCommand,
     *,
@@ -259,25 +322,18 @@ def _render_command_row(
 ) -> str:
     marker = ">" if selected else " "
     affordance = "▾" if expanded else "▸" if has_help_details(command) else " "
-    name_width = min(18, max(12, width // 3))
-    desc_width = max(0, width - name_width - 7)
-    plain = (
-        f" {marker} {affordance} {_pad(command.name, name_width)} "
-        f"{_clip(command.description, desc_width)}"
-    )
-    padded = _pad(plain, width)
+    left = f" {marker} {affordance} {command.name}"
+    padded = _render_grid_row(left, command.description, width)
     if selected:
         return f"{MENU_SELECTION_ROW_ANSI}{padded}{ANSI_RESET}"
-    return (
-        f"{DIM_COUNTER_ANSI}   {affordance} {ANSI_RESET}"
-        f"{HIGHLIGHT_ANSI}{_pad(command.name, name_width)}{ANSI_RESET} "
-        f"{DIM_COUNTER_ANSI}{_clip(command.description, desc_width)}{ANSI_RESET}"
-    )
+    return f"{DIM_COUNTER_ANSI}{padded}{ANSI_RESET}"
 
 
 def _render_help_row(row: HelpRow, *, selected: bool, expanded: bool, width: int) -> str:
+    if row.separator:
+        return f"{DIM_COUNTER_ANSI}{_separator_rule(width)}{ANSI_RESET}"
     if row.section is not None:
-        return f"{BOLD_BRAND_ANSI}{_pad(row.section, width)}{ANSI_RESET}"
+        return _render_section_row(row.section, width)
     if row.command is None:
         return ""
     return _render_command_row(row.command, selected=selected, expanded=expanded, width=width)
@@ -291,9 +347,9 @@ def _render_display_row(
     width: int,
 ) -> str:
     if row.detail is not None:
-        return f"{DIM_COUNTER_ANSI}    {_clip(row.detail, max(0, width - 4))}{ANSI_RESET}"
+        return _render_detail_row(row.detail, width)
     return _render_help_row(
-        HelpRow(section=row.section, command=row.command),
+        HelpRow(section=row.section, command=row.command, separator=row.separator),
         selected=selected,
         expanded=expanded,
         width=width,
@@ -331,9 +387,9 @@ def _draw_help_menu(
     total_count = sum(1 for row in rows if row.selectable)
 
     write_menu_line()
-    write_menu_line(f"{PROMPT_ACCENT_ANSI}Slash commands{ANSI_RESET}")
+    write_menu_line(f"{PROMPT_ACCENT_ANSI}{_center('Slash commands', width)}{ANSI_RESET}")
     write_menu_line(f"{DIM_COUNTER_ANSI}{selected_count}/{total_count}{ANSI_RESET}")
-    write_menu_line(f"{DIM_COUNTER_ANSI}{'─' * width}{ANSI_RESET}")
+    write_menu_line(f"{DIM_COUNTER_ANSI}{_separator_rule(width)}{ANSI_RESET}")
     for offset, row in enumerate(visible, start=start):
         write_menu_line(
             _render_display_row(

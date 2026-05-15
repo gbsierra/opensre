@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import re
 import sys
+from types import SimpleNamespace
 
 from app.cli.interactive_shell.ui import choice_menu
 
@@ -62,3 +63,26 @@ def test_pick_ignores_unmapped_keys(monkeypatch) -> None:
     rendered = out.getvalue()
     assert rendered.count("test") == 2
     assert "A\r\x1b[J" in rendered
+
+
+def test_read_action_treats_space_as_enter(monkeypatch) -> None:
+    monkeypatch.setattr(choice_menu.os, "name", "nt")
+    monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(getch=lambda: b" "))
+
+    assert choice_menu._read_action() == "enter"
+
+
+def test_read_action_treats_right_arrow_as_enter(monkeypatch) -> None:
+    keys = iter([b"\xe0", b"M"])
+    monkeypatch.setattr(choice_menu.os, "name", "nt")
+    monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(getch=lambda: next(keys)))
+
+    assert choice_menu._read_action() == "enter"
+
+
+def test_read_action_ignores_left_arrow(monkeypatch) -> None:
+    keys = iter([b"\xe0", b"K"])
+    monkeypatch.setattr(choice_menu.os, "name", "nt")
+    monkeypatch.setitem(sys.modules, "msvcrt", SimpleNamespace(getch=lambda: next(keys)))
+
+    assert choice_menu._read_action() == "ignore"

@@ -28,7 +28,7 @@ from app.cli.interactive_shell.ui.theme import (
     SECONDARY,
 )
 
-_HINT = "↑↓/j/k  Enter  Esc/q"
+_HINT = "↑↓/j/k  Enter/Space  Esc/q"
 CRUMB_SEP = "  ›  "
 # Blank line after the submitted slash line before the menu header (all pickers).
 _MENU_LEADING_LINES = 1
@@ -59,7 +59,7 @@ def _read_action() -> MenuAction:
         c = msvcrt.getch()  # type: ignore[attr-defined]
         if c in (b"\x03",):
             return "cancel"
-        if c in (b"\r", b"\n"):
+        if c in (b"\r", b"\n", b" "):
             return "enter"
         if c in (b"j", b"J"):
             return "down"
@@ -69,7 +69,15 @@ def _read_action() -> MenuAction:
             return "cancel"
         if c in (b"\xe0", b"\x00"):
             c2 = msvcrt.getch()  # type: ignore[attr-defined]
-            return "up" if c2 == b"H" else "down" if c2 == b"P" else "cancel"
+            if c2 == b"H":
+                return "up"
+            if c2 == b"P":
+                return "down"
+            if c2 == b"M":
+                return "enter"
+            if c2 == b"K":
+                return "ignore"
+            return "ignore"
         if c == b"\x1b":
             return "cancel"
         return "ignore"
@@ -89,7 +97,7 @@ def _read_action() -> MenuAction:
         key_code = cast(int, data[0])
         if key_code in (3, 4):
             return "cancel"
-        if key_code in (10, 13):
+        if key_code in (10, 13, 32):
             return "enter"
         if data in (b"j", b"J"):
             return "down"
@@ -106,6 +114,10 @@ def _read_action() -> MenuAction:
                         return "up"
                     if arrow == b"B":
                         return "down"
+                    if arrow == b"C":
+                        return "enter"
+                    if arrow == b"D":
+                        return "ignore"
             return "cancel"
         return "ignore"
     finally:
