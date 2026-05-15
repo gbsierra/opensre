@@ -73,14 +73,18 @@ class TestDispatchSlash:
         assert "/tasks" in output
         assert "/cancel <task_id>" not in output
 
-    def test_tty_help_dispatch_uses_interactive_picker(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_tty_help_dispatch_uses_interactive_picker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from app.cli.interactive_shell.command_registry import help as help_cmd
 
         session = ReplSession()
         console, buf = _capture()
         picker_called: list[bool] = []
         monkeypatch.setattr(help_cmd, "repl_tty_interactive", lambda: True)
-        monkeypatch.setattr(help_cmd, "choose_help_command", lambda _sections: picker_called.append(True))
+        monkeypatch.setattr(
+            help_cmd, "choose_help_command", lambda _sections: picker_called.append(True)
+        )
 
         assert dispatch_slash("/help", session, console) is True
 

@@ -290,8 +290,7 @@ def _render_section_row(section: str, width: int) -> str:
     left_column = _pad(section, _left_column_width(width))
     right_column = " " * _right_column_width(width)
     return (
-        f"{BOLD_BRAND_ANSI}{left_column}{ANSI_RESET}"
-        f"{DIM_COUNTER_ANSI}│ {right_column}{ANSI_RESET}"
+        f"{BOLD_BRAND_ANSI}{left_column}{ANSI_RESET}{DIM_COUNTER_ANSI}│ {right_column}{ANSI_RESET}"
     )
 
 

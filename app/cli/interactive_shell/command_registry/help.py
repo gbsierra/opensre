@@ -116,7 +116,9 @@ def _cmd_help(_session: ReplSession, console: Console, args: list[str]) -> bool:
             render_section_detail(console, section_name, commands)
             return True
         console.print(f"[{ERROR}]unknown help topic:[/] {escape(target)}")
-        console.print("Try [bold]/help[/bold], [bold]/help /model[/bold], or [bold]/help tasks[/bold].")
+        console.print(
+            "Try [bold]/help[/bold], [bold]/help /model[/bold], or [bold]/help tasks[/bold]."
+        )
         return True
 
     if repl_tty_interactive():
