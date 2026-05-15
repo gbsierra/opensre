@@ -32,7 +32,7 @@ from app.cli.interactive_shell.ui.theme import (
 )
 
 HelpSection = tuple[str, Sequence[SlashCommand]]
-_HELP_VIEW_ROWS = 14
+_HELP_VIEW_ROWS = 20
 _HELP_HINT = "↑↓/j/k navigate  ·  Enter/Space toggle details  ·  Esc/q close"
 
 
