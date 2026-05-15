@@ -1,0 +1,237 @@
+"""Tests for the grouped /help picker renderer."""
+
+from __future__ import annotations
+
+import io
+import re
+import sys
+
+from app.cli.interactive_shell.command_registry.types import SlashCommand
+from app.cli.interactive_shell.ui import help_menu
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;:]*[A-Za-z]")
+
+
+def _cmd(name: str, description: str | None = None) -> SlashCommand:
+    return SlashCommand(name, description or f"{name} description", lambda *_args: True)
+
+
+def test_flatten_help_rows_preserves_category_headers() -> None:
+    rows = help_menu._flatten_help_rows(
+        [
+            ("Session", [_cmd("/status")]),
+            ("Tasks", [_cmd("/tasks"), _cmd("/cancel")]),
+        ]
+    )
+
+    assert [row.section for row in rows if row.section is not None] == ["Session", "Tasks"]
+    assert [row.command.name for row in rows if row.command is not None] == [
+        "/status",
+        "/tasks",
+        "/cancel",
+    ]
+
+
+def test_navigation_skips_category_headers() -> None:
+    rows = help_menu._flatten_help_rows(
+        [
+            ("Session", [_cmd("/status")]),
+            ("Tasks", [_cmd("/tasks")]),
+        ]
+    )
+
+    assert help_menu._first_selectable_index(rows) == 1
+    assert help_menu._next_selectable_index(rows, 1, 1) == 3
+    assert help_menu._next_selectable_index(rows, 3, -1) == 1
+
+
+def test_draw_help_menu_uses_bounded_viewport_and_category_context(monkeypatch) -> None:
+    sections = [
+        ("Session", [_cmd(f"/session-{index}") for index in range(10)]),
+        ("Tasks", [_cmd(f"/task-{index}") for index in range(10)]),
+    ]
+    rows = help_menu._flatten_help_rows(sections)
+    selected = next(
+        index for index, row in enumerate(rows) if row.command and row.command.name == "/task-2"
+    )
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(help_menu, "menu_columns", lambda: 90)
+
+    height = help_menu._draw_help_menu(
+        rows,
+        selected=selected,
+        expanded=None,
+        erase_lines=0,
+        viewport_height=7,
+    )
+
+    rendered = out.getvalue()
+    plain = _ANSI_RE.sub("", rendered)
+    assert height == 13
+    assert "Tasks" in plain
+    assert "/task-2" in plain
+    assert "/session-0" not in plain
+    assert "/task-9" not in plain
+
+
+def test_draw_help_menu_expands_selected_command_inline(monkeypatch) -> None:
+    command = SlashCommand(
+        "/reset",
+        "Clear session state.",
+        lambda *_args: True,
+        usage=("/reset",),
+        notes=("Trust mode is preserved.",),
+    )
+    rows = help_menu._flatten_help_rows([("Session", [command])])
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(help_menu, "menu_columns", lambda: 90)
+
+    help_menu._draw_help_menu(
+        rows,
+        selected=1,
+        expanded=1,
+        erase_lines=0,
+        viewport_height=7,
+    )
+
+    plain = _ANSI_RE.sub("", out.getvalue())
+    assert "/reset" in plain
+    assert "> ▾ /reset" in plain
+    assert "usage:" in plain
+    assert "Trust mode is preserved." in plain
+
+
+def test_draw_help_menu_marks_expandable_and_plain_commands(monkeypatch) -> None:
+    expandable = SlashCommand(
+        "/trust",
+        "Manage trust mode.",
+        lambda *_args: True,
+        usage=("/trust on", "/trust off"),
+    )
+    plain_command = _cmd("/status", "Show session status.")
+    rows = help_menu._flatten_help_rows([("Session", [expandable, plain_command])])
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(help_menu, "menu_columns", lambda: 90)
+
+    help_menu._draw_help_menu(
+        rows,
+        selected=1,
+        expanded=None,
+        erase_lines=0,
+        viewport_height=7,
+    )
+
+    plain = _ANSI_RE.sub("", out.getvalue())
+    assert "> ▸ /trust" in plain
+    assert "  /status" in plain
+    assert "▸ /status" not in plain
+
+
+def test_expanded_detail_lines_include_all_usage_examples_and_notes() -> None:
+    command = SlashCommand(
+        "/model",
+        "Show model settings.",
+        lambda *_args: True,
+        usage=tuple(f"/model action {index}" for index in range(10)),
+        examples=("/model set openai",),
+        notes=("Provider defaults can be restored.",),
+    )
+
+    lines = help_menu._expanded_detail_lines(command)
+
+    assert "/model action 0" in lines[1]
+    assert "  /model action 9" in lines
+    assert "examples:" in lines
+    assert "  /model set openai" in lines
+    assert "notes:" in lines
+    assert "  Provider defaults can be restored." in lines
+    assert "…" not in lines
+
+
+def test_draw_help_menu_expands_viewport_to_show_all_details(monkeypatch) -> None:
+    command = SlashCommand(
+        "/model",
+        "Show model settings.",
+        lambda *_args: True,
+        usage=tuple(f"/model action {index}" for index in range(10)),
+    )
+    rows = help_menu._flatten_help_rows([("Models", [command, _cmd("/status")])])
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(help_menu, "menu_columns", lambda: 90)
+
+    height = help_menu._draw_help_menu(
+        rows,
+        selected=1,
+        expanded=1,
+        erase_lines=0,
+        viewport_height=7,
+    )
+
+    plain = _ANSI_RE.sub("", out.getvalue())
+    assert height > 13
+    assert "/model action 0" in plain
+    assert "/model action 9" in plain
+    assert "…" not in plain
+
+
+def test_choose_help_command_toggles_inline_details_and_exits(monkeypatch) -> None:
+    sections = [
+        (
+            "Session",
+            [
+                _cmd("/status"),
+                SlashCommand(
+                    "/trust",
+                    "Manage trust mode.",
+                    lambda *_args: True,
+                    usage=("/trust on", "/trust off"),
+                ),
+            ],
+        )
+    ]
+    out = io.StringIO()
+    actions = iter(["down", "enter", "cancel"])
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(help_menu, "menu_columns", lambda: 80)
+    monkeypatch.setattr(help_menu, "read_menu_action", lambda: next(actions))
+
+    selected = help_menu.choose_help_command(sections)
+
+    assert selected is None
+    rendered = out.getvalue()
+    assert "\x1b[" in rendered
+    assert "A\r\x1b[J" in rendered
+    plain = _ANSI_RE.sub("", rendered)
+    assert "/trust on" in plain
+
+
+def test_choose_help_command_ignores_enter_for_commands_without_details(monkeypatch) -> None:
+    sections = [("Session", [_cmd("/status")])]
+    out = io.StringIO()
+    actions = iter(["enter", "cancel"])
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(help_menu, "menu_columns", lambda: 80)
+    monkeypatch.setattr(help_menu, "read_menu_action", lambda: next(actions))
+
+    assert help_menu.choose_help_command(sections) is None
+
+    plain = _ANSI_RE.sub("", out.getvalue())
+    assert "No additional usage." not in plain
+
+
+def test_choose_help_command_ignores_unknown_actions(monkeypatch) -> None:
+    sections = [("Session", [_cmd("/status")])]
+    out = io.StringIO()
+    actions = iter(["ignore", "cancel"])
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(help_menu, "menu_columns", lambda: 80)
+    monkeypatch.setattr(help_menu, "read_menu_action", lambda: next(actions))
+
+    assert help_menu.choose_help_command(sections) is None
+
+    rendered = out.getvalue()
+    assert rendered.count("Slash commands") == 2

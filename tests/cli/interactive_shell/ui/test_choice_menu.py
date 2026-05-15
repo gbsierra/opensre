@@ -48,3 +48,17 @@ def test_erase_menu_block_resets_to_column_zero(monkeypatch) -> None:
     rendered = out.getvalue()
     assert rendered.startswith("\r\x1b[")
     assert "A\r\x1b[J" in rendered
+
+
+def test_pick_ignores_unmapped_keys(monkeypatch) -> None:
+    out = io.StringIO()
+    actions = iter(["ignore", "enter"])
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(choice_menu, "_cols", lambda: 80)
+    monkeypatch.setattr(choice_menu, "_read_action", lambda: next(actions))
+
+    assert choice_menu._pick(title="test", crumb="", labels=["one"]) == 0
+
+    rendered = out.getvalue()
+    assert rendered.count("test") == 2
+    assert "A\r\x1b[J" in rendered
