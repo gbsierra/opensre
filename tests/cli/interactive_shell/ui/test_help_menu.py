@@ -226,8 +226,7 @@ def test_command_rows_highlight_only_unselected_command_name() -> None:
     )
 
     assert (
-        f"{help_menu.DIM_COUNTER_ANSI}   ▸ {help_menu.ANSI_RESET}"
-        f"{help_menu.HIGHLIGHT_ANSI}/trust"
+        f"{help_menu.DIM_COUNTER_ANSI}   ▸ {help_menu.ANSI_RESET}{help_menu.HIGHLIGHT_ANSI}/trust"
     ) in rendered
     assert f"{help_menu.HIGHLIGHT_ANSI}▸" not in rendered
 
