@@ -96,6 +96,7 @@ class AnthropicAgentClient:
         tools: list[dict[str, Any]] | None = None,
     ) -> AgentLLMResponse:
         from anthropic import AuthenticationError, BadRequestError, NotFoundError
+        from anthropic import PermissionDeniedError
 
         kwargs: dict[str, Any] = {
             "model": self._model,
@@ -117,6 +118,8 @@ class AnthropicAgentClient:
                 raise RuntimeError(self._authentication_error_message()) from err
             except NotFoundError as err:
                 raise RuntimeError(self._model_not_found_error_message()) from err
+            except PermissionDeniedError as err:
+                raise RuntimeError(self._permission_denied_error_message()) from err
             except BadRequestError as err:
                 raise RuntimeError(
                     f"{self.provider_name} request rejected (HTTP 400): {err.message}"
@@ -174,6 +177,9 @@ class AnthropicAgentClient:
     def _model_not_found_error_message(self) -> str:
         return f"{self.provider_name} model '{self._model}' not found."
 
+    def _permission_denied_error_message(self) -> str:
+        return f"{self.provider_name} API access denied. Check your API key permissions."
+
 
 class BedrockAgentClient(AnthropicAgentClient):
     """Bedrock-backed client using AnthropicBedrock SDK."""
@@ -196,6 +202,14 @@ class BedrockAgentClient(AnthropicAgentClient):
             timeout=_CLIENT_TIMEOUT_SEC,
         )
         super().__init__(model=model, max_tokens=max_tokens, client=bedrock_client)
+
+    def _permission_denied_error_message(self) -> str:
+        return (
+            f"Bedrock model '{self._model}' is not available for your account. "
+            "Check Bedrock model access in the configured AWS region, AWS Marketplace "
+            "subscription/payment setup, and IAM permissions including "
+            "aws-marketplace:ViewSubscriptions and aws-marketplace:Subscribe."
+        )
 
 
 class OpenAIAgentClient:

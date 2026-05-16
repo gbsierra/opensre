@@ -67,6 +67,11 @@ _OPERATOR_ACTIONABLE_LLM_ERROR_PATTERNS: tuple[re.Pattern[str], ...] = (
     # (``"<provider> billing quota exceeded. ..."``) and the Bedrock Anthropic
     # ``usage limits`` path (``"Anthropic billing quota exceeded for Bedrock model ..."``).
     re.compile(r"\bbilling quota exceeded\b", re.I),
+    # Bedrock account/model access failures are operator-actionable: the AWS
+    # account, Marketplace subscription/payment setup, region model access, or
+    # IAM policy needs to change before retrying can succeed.
+    re.compile(r"\bBedrock model\s+['\"][^'\"]+['\"]\s+is not available for your account\b", re.I),
+    re.compile(r"\bAccess denied for Bedrock model\s+['\"][^'\"]+['\"]", re.I),
 )
 
 

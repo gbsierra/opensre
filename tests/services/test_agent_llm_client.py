@@ -22,6 +22,9 @@ def _install_fake_anthropic(monkeypatch: pytest.MonkeyPatch) -> types.SimpleName
     class NotFoundError(Exception):
         pass
 
+    class PermissionDeniedError(Exception):
+        pass
+
     class Anthropic:
         def __init__(self, **_: object) -> None:
             self.messages = types.SimpleNamespace(create=lambda **_: None)
@@ -33,6 +36,7 @@ def _install_fake_anthropic(monkeypatch: pytest.MonkeyPatch) -> types.SimpleName
     fake_module.AuthenticationError = AuthenticationError
     fake_module.BadRequestError = BadRequestError
     fake_module.NotFoundError = NotFoundError
+    fake_module.PermissionDeniedError = PermissionDeniedError
     fake_module.Anthropic = Anthropic
     fake_module.AnthropicBedrock = AnthropicBedrock
     monkeypatch.setitem(sys.modules, "anthropic", fake_module)
@@ -67,6 +71,34 @@ def test_bedrock_auth_error_message_references_aws_credentials(
     assert "Bedrock authentication failed" in message
     assert "AWS credentials" in message
     assert "ANTHROPIC_API_KEY" not in message
+
+
+def test_bedrock_permission_denied_is_not_retried_and_mentions_marketplace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_anthropic = _install_fake_anthropic(monkeypatch)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    client = BedrockAgentClient(model="us.anthropic.claude-sonnet-4-6")
+    calls = 0
+
+    def raise_permission_denied(**_: object) -> object:
+        nonlocal calls
+        calls += 1
+        raise fake_anthropic.PermissionDeniedError("marketplace denied")
+
+    client._client = types.SimpleNamespace(
+        messages=types.SimpleNamespace(create=raise_permission_denied)
+    )
+
+    with pytest.raises(RuntimeError) as exc:
+        client.invoke(messages=[{"role": "user", "content": "hi"}])
+
+    message = str(exc.value)
+    assert calls == 1
+    assert "Bedrock model 'us.anthropic.claude-sonnet-4-6' is not available" in message
+    assert "AWS Marketplace" in message
+    assert "aws-marketplace:ViewSubscriptions" in message
+    assert "aws-marketplace:Subscribe" in message
 
 
 def _install_fake_openai(monkeypatch: pytest.MonkeyPatch) -> types.SimpleNamespace:
