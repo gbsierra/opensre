@@ -10,7 +10,7 @@ render_ready_box(console, session=None)
     DIM-bordered two-column welcome panel:
       left  → ◉ OpenSRE · provider · model · mode · cwd
       right → "Tips for getting started" + "What's new"
-    Called after the splash and on /clear, /welcome, and greeting aliases.
+    Called after the splash and on /clear.
 
 render_banner(console)
     Backward-compatible shim: render_splash + render_ready_box in one call.

@@ -31,7 +31,6 @@ class TestClassifyInput:
             "clear",
             "reset",
             "trust",
-            "welcome",
             "integrations",
             "integration",
             "int",
@@ -72,13 +71,14 @@ class TestClassifyInput:
         assert classify_input("HELP", session) == "slash"
         assert classify_input("Exit", session) == "slash"
 
-    def test_no_prior_greeting_routes_to_welcome_panel(self) -> None:
-        # Greetings and meta-words ("hi", "agent", "menu", …) are aliased to the
-        # /welcome slash command so the user always lands on the structured
-        # welcome panel instead of an unstructured LLM reply.
+    def test_no_prior_greeting_routes_to_cli_agent(self, monkeypatch) -> None:
+        # Greetings and meta-words are not slash commands. They should fall
+        # through to the normal chat surface instead of dispatching a missing
+        # /welcome command.
+        monkeypatch.setattr(_router_module, "_LLM_ROUTING_DISABLED", True)
         session = ReplSession()
         for word in ("hey", "hi", "agent", "menu", "welcome"):
-            assert classify_input(word, session) == "slash", word
+            assert classify_input(word, session) == "cli_agent", word
 
     def test_long_operational_health_question_stays_cli_agent(self) -> None:
         """Long setup questions must not start an investigation run just because len >= 48."""
