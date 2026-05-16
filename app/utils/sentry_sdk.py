@@ -71,7 +71,6 @@ _OPERATOR_ACTIONABLE_LLM_ERROR_PATTERNS: tuple[re.Pattern[str], ...] = (
     # account, Marketplace subscription/payment setup, region model access, or
     # IAM policy needs to change before retrying can succeed.
     re.compile(r"\bBedrock model\s+['\"][^'\"]+['\"]\s+is not available for your account\b", re.I),
-    re.compile(r"\bAccess denied for Bedrock model\s+['\"][^'\"]+['\"]", re.I),
 )
 
 

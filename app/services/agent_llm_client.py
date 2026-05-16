@@ -95,8 +95,12 @@ class AnthropicAgentClient:
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> AgentLLMResponse:
-        from anthropic import AuthenticationError, BadRequestError, NotFoundError
-        from anthropic import PermissionDeniedError
+        from anthropic import (
+            AuthenticationError,
+            BadRequestError,
+            NotFoundError,
+            PermissionDeniedError,
+        )
 
         kwargs: dict[str, Any] = {
             "model": self._model,
