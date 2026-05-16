@@ -212,6 +212,26 @@ def test_draw_help_menu_marks_expandable_and_plain_commands(monkeypatch) -> None
     assert "▸ /status" not in plain
 
 
+def test_command_rows_highlight_only_unselected_command_name() -> None:
+    rendered = help_menu._render_command_row(
+        SlashCommand(
+            "/trust",
+            "Manage trust mode.",
+            lambda *_args: True,
+            usage=("/trust on", "/trust off"),
+        ),
+        selected=False,
+        expanded=False,
+        width=60,
+    )
+
+    assert (
+        f"{help_menu.DIM_COUNTER_ANSI}   ▸ {help_menu.ANSI_RESET}"
+        f"{help_menu.HIGHLIGHT_ANSI}/trust"
+    ) in rendered
+    assert f"{help_menu.HIGHLIGHT_ANSI}▸" not in rendered
+
+
 def test_expanded_detail_lines_include_all_usage_examples_and_notes() -> None:
     command = SlashCommand(
         "/model",

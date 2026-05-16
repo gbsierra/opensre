@@ -26,13 +26,14 @@ from app.cli.interactive_shell.ui.theme import (
     DIM,
     DIM_COUNTER_ANSI,
     HIGHLIGHT,
+    HIGHLIGHT_ANSI,
     MENU_SELECTION_ROW_ANSI,
     PROMPT_ACCENT_ANSI,
     TEXT_ANSI,
 )
 
 HelpSection = tuple[str, Sequence[SlashCommand]]
-_HELP_VIEW_ROWS = 20
+_HELP_VIEW_ROWS = 21
 _HELP_HINT = "↑↓/j/k navigate  ·  Enter/Space toggle details  ·  Esc/q close"
 
 
@@ -325,7 +326,20 @@ def _render_command_row(
     padded = _render_grid_row(left, command.description, width)
     if selected:
         return f"{MENU_SELECTION_ROW_ANSI}{padded}{ANSI_RESET}"
-    return f"{DIM_COUNTER_ANSI}{padded}{ANSI_RESET}"
+
+    left_width = _left_column_width(width)
+    right_width = _right_column_width(width)
+    prefix = f" {marker} {affordance} "
+    command_width = max(0, left_width - _visible_width(prefix))
+    command_name = _clip(command.name, command_width)
+    command_padding = " " * max(0, command_width - _visible_width(command_name))
+    right_column = _clip(command.description, right_width)
+    right_padding = " " * max(0, right_width - _visible_width(right_column))
+    return (
+        f"{DIM_COUNTER_ANSI}{prefix}{ANSI_RESET}"
+        f"{HIGHLIGHT_ANSI}{command_name}{ANSI_RESET}"
+        f"{DIM_COUNTER_ANSI}{command_padding}│ {right_column}{right_padding}{ANSI_RESET}"
+    )
 
 
 def _render_help_row(row: HelpRow, *, selected: bool, expanded: bool, width: int) -> str:
