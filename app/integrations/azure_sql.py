@@ -19,7 +19,10 @@ from typing import Any
 
 from pydantic import Field, field_validator
 
-from app.integrations._validation_helpers import report_validation_failure
+from app.integrations._validation_helpers import (
+    report_integration_runtime_failure,
+    report_validation_failure,
+)
 from app.strict_config import StrictConfigModel
 from app.utils.truncation import truncate
 
@@ -338,7 +341,7 @@ def get_server_status(config: AzureSQLConfig) -> dict[str, Any]:
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="azure_sql",
@@ -421,7 +424,7 @@ def get_current_queries(
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="azure_sql",
@@ -508,7 +511,7 @@ def get_resource_stats(
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="azure_sql",
@@ -586,7 +589,7 @@ def get_slow_queries(
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="azure_sql",
@@ -647,7 +650,7 @@ def get_wait_stats(config: AzureSQLConfig) -> dict[str, Any]:
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="azure_sql",

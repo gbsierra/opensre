@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
-from app.integrations._validation_helpers import report_validation_failure
+from app.integrations._validation_helpers import report_integration_runtime_failure
 from app.services.llm_client import get_llm_for_reasoning
 from app.version import get_version
 
@@ -524,7 +524,7 @@ def summarize_highlights(
         if _bool_env("DAILY_UPDATE_REQUIRE_LLM", default=False):
             # Let an outer boundary capture this — avoids a double Sentry event.
             raise
-        report_validation_failure(
+        report_integration_runtime_failure(
             exc,
             logger=logger,
             integration="daily_update",

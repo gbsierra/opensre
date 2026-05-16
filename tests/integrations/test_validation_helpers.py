@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 from unittest.mock import MagicMock, patch
 
-from app.integrations._validation_helpers import report_validation_failure
+from app.integrations._validation_helpers import (
+    report_integration_runtime_failure,
+    report_validation_failure,
+)
 
 
 def _mock_logger() -> MagicMock:
@@ -96,3 +99,41 @@ class TestReportValidationFailure:
             )
         mock_cap.assert_called_once()
         assert mock_cap.call_args[0][0] is exc
+
+
+class TestReportIntegrationRuntimeFailure:
+    def test_logs_warning_without_sentry_capture(self) -> None:
+        mock_log = _mock_logger()
+        exc = RuntimeError("connection refused")
+        with patch("app.utils.errors.capture_exception") as mock_cap:
+            report_integration_runtime_failure(
+                exc,
+                logger=mock_log,
+                integration="postgresql",
+                method="get_table_stats",
+            )
+        mock_log.warning.assert_called_once()
+        mock_cap.assert_not_called()
+
+    def test_runtime_message_includes_integration_and_method(self) -> None:
+        mock_log = _mock_logger()
+        report_integration_runtime_failure(
+            RuntimeError("x"),
+            logger=mock_log,
+            integration="kafka",
+            method="get_topic_health",
+        )
+        message = mock_log.warning.call_args[0][1]
+        assert message == "[kafka] get_topic_health runtime failed"
+
+    def test_runtime_severity_override_routes_to_logger(self) -> None:
+        mock_log = _mock_logger()
+        report_integration_runtime_failure(
+            RuntimeError("x"),
+            logger=mock_log,
+            integration="mongodb",
+            method="get_server_status",
+            severity="error",
+        )
+        mock_log.error.assert_called_once()
+        mock_log.warning.assert_not_called()

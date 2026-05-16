@@ -14,7 +14,10 @@ from typing import Any
 
 from pydantic import Field, field_validator
 
-from app.integrations._validation_helpers import report_validation_failure
+from app.integrations._validation_helpers import (
+    report_integration_runtime_failure,
+    report_validation_failure,
+)
 from app.strict_config import StrictConfigModel
 
 logger = logging.getLogger(__name__)
@@ -228,7 +231,7 @@ def get_topic_health(
             "topics": topics,
         }
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="kafka",
@@ -298,7 +301,7 @@ def get_consumer_group_lag(
         finally:
             consumer.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="kafka",

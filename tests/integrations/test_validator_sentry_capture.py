@@ -1,15 +1,19 @@
-"""AST checks: every migrated broad-except in app/integrations calls report_validation_failure.
+"""AST checks: migrated integration broad-except blocks use the right reporter.
 
 Issue #1470 acceptance criterion: every listed validator must invoke
 ``report_validation_failure`` on its broad ``except Exception`` block, with
 tags carrying ``integration`` and ``method`` so Sentry events are filterable
 by vendor.
 
+Runtime diagnostic/query functions must invoke
+``report_integration_runtime_failure`` instead. Those failures usually reflect
+downstream service state and should be logged without Sentry capture.
+
 This test parses each integration module and asserts, for every listed
 ``(function, line)`` pair, that:
 
-1. The function's broad ``except Exception`` handler contains a call to
-   ``report_validation_failure``.
+1. The function's broad ``except Exception`` handler contains a call to the
+   expected reporter.
 2. The ``integration=`` and ``method=`` keyword arguments are string literals
    matching the expected tag values.
 
@@ -362,12 +366,18 @@ def _kwarg_str(call: ast.Call, key: str) -> str | None:
     return None
 
 
+def _expected_reporter(case: MigrationCase) -> str:
+    if case.function.startswith("validate_"):
+        return "report_validation_failure"
+    return "report_integration_runtime_failure"
+
+
 @pytest.mark.parametrize(
     "case",
     CASES,
     ids=lambda c: f"{Path(c.module_path).stem}::{c.function}",
 )
-def test_broad_except_calls_report_validation_failure(case: MigrationCase) -> None:
+def test_broad_except_calls_expected_integration_reporter(case: MigrationCase) -> None:
     source = (_REPO_ROOT / case.module_path).read_text(encoding="utf-8")
     tree = ast.parse(source)
     fn = _find_function(tree, case.function)
@@ -376,16 +386,17 @@ def test_broad_except_calls_report_validation_failure(case: MigrationCase) -> No
     handlers = _broad_except_handlers(fn)
     assert handlers, f"no `except Exception` handlers in {case.module_path}::{case.function}"
 
+    expected_reporter = _expected_reporter(case)
     matching_calls: list[ast.Call] = []
     for h in handlers:
-        for call in _calls_to(h, "report_validation_failure"):
+        for call in _calls_to(h, expected_reporter):
             integration = _kwarg_str(call, "integration")
             method = _kwarg_str(call, "method")
             if integration == case.integration and method == case.method:
                 matching_calls.append(call)
 
     assert matching_calls, (
-        f"{case.module_path}::{case.function} has no `report_validation_failure` call "
+        f"{case.module_path}::{case.function} has no `{expected_reporter}` call "
         f"with integration={case.integration!r} and method={case.method!r}"
     )
     # Each tagged (integration, method) pair should appear exactly once per function
@@ -398,13 +409,15 @@ def test_broad_except_calls_report_validation_failure(case: MigrationCase) -> No
 
 
 def test_every_migrated_module_imports_the_helper() -> None:
-    """Sanity guard: every file we touched should import report_validation_failure."""
-    seen_modules = {case.module_path for case in CASES}
-    for module_path in seen_modules:
+    """Sanity guard: every file we touched imports its expected reporter(s)."""
+    by_module: dict[str, set[str]] = {}
+    for case in CASES:
+        by_module.setdefault(case.module_path, set()).add(_expected_reporter(case))
+
+    for module_path, expected_helpers in by_module.items():
         source = (_REPO_ROOT / module_path).read_text(encoding="utf-8")
-        assert (
-            "from app.integrations._validation_helpers import report_validation_failure" in source
-        ), f"{module_path} migration is incomplete: missing import of report_validation_failure"
+        for helper in expected_helpers:
+            assert helper in source, f"{module_path} migration is incomplete: missing {helper}"
 
 
 def test_broad_except_handlers_skips_nested_handlers() -> None:

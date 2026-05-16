@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tomllib
 
-from app.integrations._validation_helpers import report_validation_failure
+from app.integrations._validation_helpers import report_integration_runtime_failure
 from app.integrations.llm_cli.base import CLIInvocation, CLIProbe
 from app.integrations.llm_cli.binary_resolver import (
     candidate_binary_names as _candidate_binary_names,
@@ -93,7 +93,7 @@ def _check_kimi_auth_fallback() -> tuple[bool | None, str]:
                     return True, "Authenticated via config.toml."
         return False, "No API key configured. Run: kimi login"
     except Exception as e:
-        report_validation_failure(
+        report_integration_runtime_failure(
             e,
             logger=logger,
             integration="kimi",

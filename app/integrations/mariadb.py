@@ -15,7 +15,10 @@ from typing import Any
 from pydantic import Field, field_validator
 
 from app.integrations._relational import RelationalConfigBase, env_bool, env_str
-from app.integrations._validation_helpers import report_validation_failure
+from app.integrations._validation_helpers import (
+    report_integration_runtime_failure,
+    report_validation_failure,
+)
 from app.utils.coercion import safe_int
 from app.utils.truncation import truncate
 
@@ -211,7 +214,7 @@ def get_process_list(
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mariadb",
@@ -267,7 +270,7 @@ def get_global_status(config: MariaDBConfig) -> dict[str, Any]:
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mariadb",
@@ -304,7 +307,7 @@ def get_innodb_status(config: MariaDBConfig) -> dict[str, Any]:
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mariadb",
@@ -376,7 +379,7 @@ def get_slow_queries(
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mariadb",
@@ -450,7 +453,7 @@ def get_replication_status(config: MariaDBConfig) -> dict[str, Any]:
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mariadb",

@@ -15,7 +15,10 @@ from typing import Any
 import httpx
 from pydantic import Field, field_validator
 
-from app.integrations._validation_helpers import report_validation_failure
+from app.integrations._validation_helpers import (
+    report_integration_runtime_failure,
+    report_validation_failure,
+)
 from app.strict_config import StrictConfigModel
 
 logger = logging.getLogger(__name__)
@@ -167,7 +170,7 @@ def list_commits(
         finally:
             client.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="bitbucket",
@@ -209,7 +212,7 @@ def get_file_contents(
         finally:
             client.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="bitbucket",
@@ -265,7 +268,7 @@ def search_code(
         finally:
             client.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="bitbucket",

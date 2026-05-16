@@ -14,7 +14,10 @@ from typing import Any
 
 from pydantic import Field, field_validator
 
-from app.integrations._validation_helpers import report_validation_failure
+from app.integrations._validation_helpers import (
+    report_integration_runtime_failure,
+    report_validation_failure,
+)
 from app.strict_config import StrictConfigModel
 
 logger = logging.getLogger(__name__)
@@ -193,7 +196,7 @@ def get_server_status(config: MongoDBConfig) -> dict[str, Any]:
         finally:
             client.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mongodb",
@@ -248,7 +251,7 @@ def get_current_ops(
         finally:
             client.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mongodb",
@@ -304,7 +307,7 @@ def get_rs_status(config: MongoDBConfig) -> dict[str, Any]:
                 "members": [],
                 "note": "Server is not part of a replica set.",
             }
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mongodb",
@@ -386,7 +389,7 @@ def get_profiler_data(
         finally:
             client.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mongodb",
@@ -438,7 +441,7 @@ def get_collection_stats(
         finally:
             client.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mongodb",

@@ -18,7 +18,10 @@ from typing import Any
 import httpx
 from pydantic import Field, field_validator
 
-from app.integrations._validation_helpers import report_validation_failure
+from app.integrations._validation_helpers import (
+    report_integration_runtime_failure,
+    report_validation_failure,
+)
 from app.strict_config import StrictConfigModel
 
 logger = logging.getLogger(__name__)
@@ -209,7 +212,7 @@ def get_clusters(config: MongoDBAtlasConfig) -> dict[str, Any]:
         finally:
             client.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mongodb_atlas",
@@ -263,7 +266,7 @@ def get_alerts(
         finally:
             client.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mongodb_atlas",
@@ -405,7 +408,7 @@ def get_cluster_metrics(
         finally:
             client.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mongodb_atlas",
@@ -494,7 +497,7 @@ def get_performance_advisor(
         finally:
             client.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mongodb_atlas",
@@ -552,7 +555,7 @@ def get_cluster_events(
         finally:
             client.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="mongodb_atlas",

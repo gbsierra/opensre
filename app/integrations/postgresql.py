@@ -20,7 +20,10 @@ from app.integrations._relational import (
     env_str,
     resolve_stored_or_env_config,
 )
-from app.integrations._validation_helpers import report_validation_failure
+from app.integrations._validation_helpers import (
+    report_integration_runtime_failure,
+    report_validation_failure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +286,7 @@ def get_server_status(config: PostgreSQLConfig) -> dict[str, Any]:
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="postgresql",
@@ -361,7 +364,7 @@ def get_current_queries(
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="postgresql",
@@ -476,7 +479,7 @@ def get_replication_status(config: PostgreSQLConfig) -> dict[str, Any]:
                 "replicas": [],
                 "note": "Server appears to be a replica, not a primary.",
             }
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="postgresql",
@@ -575,7 +578,7 @@ def get_slow_queries(
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="postgresql",
@@ -682,7 +685,7 @@ def get_table_stats(
         finally:
             conn.close()
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="postgresql",

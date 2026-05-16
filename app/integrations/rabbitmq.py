@@ -26,7 +26,10 @@ from typing import Any
 import httpx
 from pydantic import Field, field_validator
 
-from app.integrations._validation_helpers import report_validation_failure
+from app.integrations._validation_helpers import (
+    report_integration_runtime_failure,
+    report_validation_failure,
+)
 from app.strict_config import StrictConfigModel
 from app.utils.coercion import safe_int
 
@@ -282,7 +285,7 @@ def get_queue_backlog(
                 "queues": truncated,
             }
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="rabbitmq",
@@ -333,7 +336,7 @@ def get_consumer_health(
                 "consumers": consumers,
             }
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="rabbitmq",
@@ -411,7 +414,7 @@ def get_broker_overview(config: RabbitMQConfig) -> dict[str, Any]:
                 "alarms": alarm_payload,
             }
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="rabbitmq",
@@ -463,7 +466,7 @@ def get_node_health(config: RabbitMQConfig) -> dict[str, Any]:
                 "nodes": nodes,
             }
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="rabbitmq",
@@ -522,7 +525,7 @@ def get_connection_stats(
                 "connections": truncated,
             }
     except Exception as err:
-        report_validation_failure(
+        report_integration_runtime_failure(
             err,
             logger=logger,
             integration="rabbitmq",
