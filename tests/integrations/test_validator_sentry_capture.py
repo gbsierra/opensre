@@ -43,20 +43,39 @@ class MigrationCase:
     function: str  # outer function name (may include "."-separated nested suffix)
     integration: str  # expected tag.integration
     method: str  # expected tag.method
+    reporter: str
 
 
 CASES: tuple[MigrationCase, ...] = (
     # trello
     MigrationCase(
-        "app/integrations/trello.py", "validate_trello_config", "trello", "validate_trello_config"
+        "app/integrations/trello.py",
+        "validate_trello_config",
+        "trello",
+        "validate_trello_config",
+        "report_validation_failure",
     ),
     # kafka
     MigrationCase(
-        "app/integrations/kafka.py", "validate_kafka_config", "kafka", "validate_kafka_config"
+        "app/integrations/kafka.py",
+        "validate_kafka_config",
+        "kafka",
+        "validate_kafka_config",
+        "report_validation_failure",
     ),
-    MigrationCase("app/integrations/kafka.py", "get_topic_health", "kafka", "get_topic_health"),
     MigrationCase(
-        "app/integrations/kafka.py", "get_consumer_group_lag", "kafka", "get_consumer_group_lag"
+        "app/integrations/kafka.py",
+        "get_topic_health",
+        "kafka",
+        "get_topic_health",
+        "report_integration_runtime_failure",
+    ),
+    MigrationCase(
+        "app/integrations/kafka.py",
+        "get_consumer_group_lag",
+        "kafka",
+        "get_consumer_group_lag",
+        "report_integration_runtime_failure",
     ),
     # clickhouse
     MigrationCase(
@@ -64,15 +83,28 @@ CASES: tuple[MigrationCase, ...] = (
         "validate_clickhouse_config",
         "clickhouse",
         "validate_clickhouse_config",
+        "report_validation_failure",
     ),
     MigrationCase(
-        "app/integrations/clickhouse.py", "get_query_activity", "clickhouse", "get_query_activity"
+        "app/integrations/clickhouse.py",
+        "get_query_activity",
+        "clickhouse",
+        "get_query_activity",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
-        "app/integrations/clickhouse.py", "get_system_health", "clickhouse", "get_system_health"
+        "app/integrations/clickhouse.py",
+        "get_system_health",
+        "clickhouse",
+        "get_system_health",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
-        "app/integrations/clickhouse.py", "get_table_stats", "clickhouse", "get_table_stats"
+        "app/integrations/clickhouse.py",
+        "get_table_stats",
+        "clickhouse",
+        "get_table_stats",
+        "report_integration_runtime_failure",
     ),
     # github_mcp
     MigrationCase(
@@ -80,6 +112,7 @@ CASES: tuple[MigrationCase, ...] = (
         "validate_github_mcp_config",
         "github_mcp",
         "validate_github_mcp_config",
+        "report_validation_failure",
     ),
     # airflow (validate + loop site)
     MigrationCase(
@@ -87,12 +120,14 @@ CASES: tuple[MigrationCase, ...] = (
         "validate_airflow_config",
         "airflow",
         "validate_airflow_config",
+        "report_validation_failure",
     ),
     MigrationCase(
         "app/integrations/airflow.py",
         "get_recent_airflow_failures",
         "airflow",
         "get_recent_airflow_failures.task_instances",
+        "report_integration_runtime_failure",
     ),
     # posthog
     MigrationCase(
@@ -100,6 +135,7 @@ CASES: tuple[MigrationCase, ...] = (
         "validate_posthog_config",
         "posthog",
         "validate_posthog_config",
+        "report_validation_failure",
     ),
     # azure_sql
     MigrationCase(
@@ -107,26 +143,50 @@ CASES: tuple[MigrationCase, ...] = (
         "validate_azure_sql_config",
         "azure_sql",
         "validate_azure_sql_config",
+        "report_validation_failure",
     ),
     MigrationCase(
-        "app/integrations/azure_sql.py", "get_server_status", "azure_sql", "get_server_status"
+        "app/integrations/azure_sql.py",
+        "get_server_status",
+        "azure_sql",
+        "get_server_status",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
-        "app/integrations/azure_sql.py", "get_current_queries", "azure_sql", "get_current_queries"
+        "app/integrations/azure_sql.py",
+        "get_current_queries",
+        "azure_sql",
+        "get_current_queries",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
-        "app/integrations/azure_sql.py", "get_resource_stats", "azure_sql", "get_resource_stats"
+        "app/integrations/azure_sql.py",
+        "get_resource_stats",
+        "azure_sql",
+        "get_resource_stats",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
-        "app/integrations/azure_sql.py", "get_slow_queries", "azure_sql", "get_slow_queries"
+        "app/integrations/azure_sql.py",
+        "get_slow_queries",
+        "azure_sql",
+        "get_slow_queries",
+        "report_integration_runtime_failure",
     ),
-    MigrationCase("app/integrations/azure_sql.py", "get_wait_stats", "azure_sql", "get_wait_stats"),
+    MigrationCase(
+        "app/integrations/azure_sql.py",
+        "get_wait_stats",
+        "azure_sql",
+        "get_wait_stats",
+        "report_integration_runtime_failure",
+    ),
     # openclaw
     MigrationCase(
         "app/integrations/openclaw.py",
         "validate_openclaw_config",
         "openclaw",
         "validate_openclaw_config",
+        "report_validation_failure",
     ),
     # betterstack
     MigrationCase(
@@ -134,11 +194,22 @@ CASES: tuple[MigrationCase, ...] = (
         "validate_betterstack_config",
         "betterstack",
         "validate_betterstack_config",
+        "report_validation_failure",
     ),
-    MigrationCase("app/integrations/betterstack.py", "query_logs", "betterstack", "query_logs"),
+    MigrationCase(
+        "app/integrations/betterstack.py",
+        "query_logs",
+        "betterstack",
+        "query_logs",
+        "report_integration_runtime_failure",
+    ),
     # gitlab
     MigrationCase(
-        "app/integrations/gitlab.py", "validate_gitlab_config", "gitlab", "validate_gitlab_config"
+        "app/integrations/gitlab.py",
+        "validate_gitlab_config",
+        "gitlab",
+        "validate_gitlab_config",
+        "report_validation_failure",
     ),
     # bitbucket
     MigrationCase(
@@ -146,29 +217,71 @@ CASES: tuple[MigrationCase, ...] = (
         "validate_bitbucket_config",
         "bitbucket",
         "validate_bitbucket_config",
+        "report_validation_failure",
     ),
-    MigrationCase("app/integrations/bitbucket.py", "list_commits", "bitbucket", "list_commits"),
     MigrationCase(
-        "app/integrations/bitbucket.py", "get_file_contents", "bitbucket", "get_file_contents"
+        "app/integrations/bitbucket.py",
+        "list_commits",
+        "bitbucket",
+        "list_commits",
+        "report_integration_runtime_failure",
     ),
-    MigrationCase("app/integrations/bitbucket.py", "search_code", "bitbucket", "search_code"),
+    MigrationCase(
+        "app/integrations/bitbucket.py",
+        "get_file_contents",
+        "bitbucket",
+        "get_file_contents",
+        "report_integration_runtime_failure",
+    ),
+    MigrationCase(
+        "app/integrations/bitbucket.py",
+        "search_code",
+        "bitbucket",
+        "search_code",
+        "report_integration_runtime_failure",
+    ),
     # mongodb
     MigrationCase(
         "app/integrations/mongodb.py",
         "validate_mongodb_config",
         "mongodb",
         "validate_mongodb_config",
+        "report_validation_failure",
     ),
     MigrationCase(
-        "app/integrations/mongodb.py", "get_server_status", "mongodb", "get_server_status"
+        "app/integrations/mongodb.py",
+        "get_server_status",
+        "mongodb",
+        "get_server_status",
+        "report_integration_runtime_failure",
     ),
-    MigrationCase("app/integrations/mongodb.py", "get_current_ops", "mongodb", "get_current_ops"),
-    MigrationCase("app/integrations/mongodb.py", "get_rs_status", "mongodb", "get_rs_status"),
     MigrationCase(
-        "app/integrations/mongodb.py", "get_profiler_data", "mongodb", "get_profiler_data"
+        "app/integrations/mongodb.py",
+        "get_current_ops",
+        "mongodb",
+        "get_current_ops",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
-        "app/integrations/mongodb.py", "get_collection_stats", "mongodb", "get_collection_stats"
+        "app/integrations/mongodb.py",
+        "get_rs_status",
+        "mongodb",
+        "get_rs_status",
+        "report_integration_runtime_failure",
+    ),
+    MigrationCase(
+        "app/integrations/mongodb.py",
+        "get_profiler_data",
+        "mongodb",
+        "get_profiler_data",
+        "report_integration_runtime_failure",
+    ),
+    MigrationCase(
+        "app/integrations/mongodb.py",
+        "get_collection_stats",
+        "mongodb",
+        "get_collection_stats",
+        "report_integration_runtime_failure",
     ),
     # postgresql
     MigrationCase(
@@ -176,55 +289,128 @@ CASES: tuple[MigrationCase, ...] = (
         "validate_postgresql_config",
         "postgresql",
         "validate_postgresql_config",
+        "report_validation_failure",
     ),
     MigrationCase(
-        "app/integrations/postgresql.py", "get_server_status", "postgresql", "get_server_status"
+        "app/integrations/postgresql.py",
+        "get_server_status",
+        "postgresql",
+        "get_server_status",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
-        "app/integrations/postgresql.py", "get_current_queries", "postgresql", "get_current_queries"
+        "app/integrations/postgresql.py",
+        "get_current_queries",
+        "postgresql",
+        "get_current_queries",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
         "app/integrations/postgresql.py",
         "get_replication_status",
         "postgresql",
         "get_replication_status",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
-        "app/integrations/postgresql.py", "get_slow_queries", "postgresql", "get_slow_queries"
+        "app/integrations/postgresql.py",
+        "get_slow_queries",
+        "postgresql",
+        "get_slow_queries",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
-        "app/integrations/postgresql.py", "get_table_stats", "postgresql", "get_table_stats"
+        "app/integrations/postgresql.py",
+        "get_table_stats",
+        "postgresql",
+        "get_table_stats",
+        "report_integration_runtime_failure",
     ),
     # mysql
     MigrationCase(
-        "app/integrations/mysql.py", "validate_mysql_config", "mysql", "validate_mysql_config"
+        "app/integrations/mysql.py",
+        "validate_mysql_config",
+        "mysql",
+        "validate_mysql_config",
+        "report_validation_failure",
     ),
-    MigrationCase("app/integrations/mysql.py", "get_server_status", "mysql", "get_server_status"),
     MigrationCase(
-        "app/integrations/mysql.py", "get_current_processes", "mysql", "get_current_processes"
+        "app/integrations/mysql.py",
+        "get_server_status",
+        "mysql",
+        "get_server_status",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
-        "app/integrations/mysql.py", "get_replication_status", "mysql", "get_replication_status"
+        "app/integrations/mysql.py",
+        "get_current_processes",
+        "mysql",
+        "get_current_processes",
+        "report_integration_runtime_failure",
     ),
-    MigrationCase("app/integrations/mysql.py", "get_slow_queries", "mysql", "get_slow_queries"),
-    MigrationCase("app/integrations/mysql.py", "get_table_stats", "mysql", "get_table_stats"),
+    MigrationCase(
+        "app/integrations/mysql.py",
+        "get_replication_status",
+        "mysql",
+        "get_replication_status",
+        "report_integration_runtime_failure",
+    ),
+    MigrationCase(
+        "app/integrations/mysql.py",
+        "get_slow_queries",
+        "mysql",
+        "get_slow_queries",
+        "report_integration_runtime_failure",
+    ),
+    MigrationCase(
+        "app/integrations/mysql.py",
+        "get_table_stats",
+        "mysql",
+        "get_table_stats",
+        "report_integration_runtime_failure",
+    ),
     # mariadb
     MigrationCase(
         "app/integrations/mariadb.py",
         "validate_mariadb_config",
         "mariadb",
         "validate_mariadb_config",
-    ),
-    MigrationCase("app/integrations/mariadb.py", "get_process_list", "mariadb", "get_process_list"),
-    MigrationCase(
-        "app/integrations/mariadb.py", "get_global_status", "mariadb", "get_global_status"
+        "report_validation_failure",
     ),
     MigrationCase(
-        "app/integrations/mariadb.py", "get_innodb_status", "mariadb", "get_innodb_status"
+        "app/integrations/mariadb.py",
+        "get_process_list",
+        "mariadb",
+        "get_process_list",
+        "report_integration_runtime_failure",
     ),
-    MigrationCase("app/integrations/mariadb.py", "get_slow_queries", "mariadb", "get_slow_queries"),
     MigrationCase(
-        "app/integrations/mariadb.py", "get_replication_status", "mariadb", "get_replication_status"
+        "app/integrations/mariadb.py",
+        "get_global_status",
+        "mariadb",
+        "get_global_status",
+        "report_integration_runtime_failure",
+    ),
+    MigrationCase(
+        "app/integrations/mariadb.py",
+        "get_innodb_status",
+        "mariadb",
+        "get_innodb_status",
+        "report_integration_runtime_failure",
+    ),
+    MigrationCase(
+        "app/integrations/mariadb.py",
+        "get_slow_queries",
+        "mariadb",
+        "get_slow_queries",
+        "report_integration_runtime_failure",
+    ),
+    MigrationCase(
+        "app/integrations/mariadb.py",
+        "get_replication_status",
+        "mariadb",
+        "get_replication_status",
+        "report_integration_runtime_failure",
     ),
     # rabbitmq
     MigrationCase(
@@ -232,19 +418,42 @@ CASES: tuple[MigrationCase, ...] = (
         "validate_rabbitmq_config",
         "rabbitmq",
         "validate_rabbitmq_config",
+        "report_validation_failure",
     ),
     MigrationCase(
-        "app/integrations/rabbitmq.py", "get_queue_backlog", "rabbitmq", "get_queue_backlog"
+        "app/integrations/rabbitmq.py",
+        "get_queue_backlog",
+        "rabbitmq",
+        "get_queue_backlog",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
-        "app/integrations/rabbitmq.py", "get_consumer_health", "rabbitmq", "get_consumer_health"
+        "app/integrations/rabbitmq.py",
+        "get_consumer_health",
+        "rabbitmq",
+        "get_consumer_health",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
-        "app/integrations/rabbitmq.py", "get_broker_overview", "rabbitmq", "get_broker_overview"
+        "app/integrations/rabbitmq.py",
+        "get_broker_overview",
+        "rabbitmq",
+        "get_broker_overview",
+        "report_integration_runtime_failure",
     ),
-    MigrationCase("app/integrations/rabbitmq.py", "get_node_health", "rabbitmq", "get_node_health"),
     MigrationCase(
-        "app/integrations/rabbitmq.py", "get_connection_stats", "rabbitmq", "get_connection_stats"
+        "app/integrations/rabbitmq.py",
+        "get_node_health",
+        "rabbitmq",
+        "get_node_health",
+        "report_integration_runtime_failure",
+    ),
+    MigrationCase(
+        "app/integrations/rabbitmq.py",
+        "get_connection_stats",
+        "rabbitmq",
+        "get_connection_stats",
+        "report_integration_runtime_failure",
     ),
     # mongodb_atlas
     MigrationCase(
@@ -252,32 +461,50 @@ CASES: tuple[MigrationCase, ...] = (
         "validate_mongodb_atlas_config",
         "mongodb_atlas",
         "validate_mongodb_atlas_config",
+        "report_validation_failure",
     ),
     MigrationCase(
-        "app/integrations/mongodb_atlas.py", "get_clusters", "mongodb_atlas", "get_clusters"
+        "app/integrations/mongodb_atlas.py",
+        "get_clusters",
+        "mongodb_atlas",
+        "get_clusters",
+        "report_integration_runtime_failure",
     ),
-    MigrationCase("app/integrations/mongodb_atlas.py", "get_alerts", "mongodb_atlas", "get_alerts"),
+    MigrationCase(
+        "app/integrations/mongodb_atlas.py",
+        "get_alerts",
+        "mongodb_atlas",
+        "get_alerts",
+        "report_integration_runtime_failure",
+    ),
     MigrationCase(
         "app/integrations/mongodb_atlas.py",
         "get_cluster_metrics",
         "mongodb_atlas",
         "get_cluster_metrics",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
         "app/integrations/mongodb_atlas.py",
         "get_performance_advisor",
         "mongodb_atlas",
         "get_performance_advisor",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
         "app/integrations/mongodb_atlas.py",
         "get_cluster_events",
         "mongodb_atlas",
         "get_cluster_events",
+        "report_integration_runtime_failure",
     ),
     # sentry (its own validator captures into OpenSRE's Sentry)
     MigrationCase(
-        "app/integrations/sentry.py", "validate_sentry_config", "sentry", "validate_sentry_config"
+        "app/integrations/sentry.py",
+        "validate_sentry_config",
+        "sentry",
+        "validate_sentry_config",
+        "report_validation_failure",
     ),
     # adjacent
     MigrationCase(
@@ -285,12 +512,14 @@ CASES: tuple[MigrationCase, ...] = (
         "summarize_highlights",
         "daily_update",
         "summarize_highlights",
+        "report_integration_runtime_failure",
     ),
     MigrationCase(
         "app/integrations/llm_cli/kimi.py",
         "_check_kimi_auth_fallback",
         "kimi",
         "_check_kimi_auth_fallback",
+        "report_integration_runtime_failure",
     ),
 )
 
@@ -366,10 +595,16 @@ def _kwarg_str(call: ast.Call, key: str) -> str | None:
     return None
 
 
-def _expected_reporter(case: MigrationCase) -> str:
-    if case.function.startswith("validate_"):
-        return "report_validation_failure"
-    return "report_integration_runtime_failure"
+def _imported_validation_helpers(tree: ast.AST) -> set[str]:
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "app.integrations._validation_helpers"
+        ):
+            continue
+        imported.update(alias.asname or alias.name for alias in node.names)
+    return imported
 
 
 @pytest.mark.parametrize(
@@ -386,17 +621,16 @@ def test_broad_except_calls_expected_integration_reporter(case: MigrationCase) -
     handlers = _broad_except_handlers(fn)
     assert handlers, f"no `except Exception` handlers in {case.module_path}::{case.function}"
 
-    expected_reporter = _expected_reporter(case)
     matching_calls: list[ast.Call] = []
     for h in handlers:
-        for call in _calls_to(h, expected_reporter):
+        for call in _calls_to(h, case.reporter):
             integration = _kwarg_str(call, "integration")
             method = _kwarg_str(call, "method")
             if integration == case.integration and method == case.method:
                 matching_calls.append(call)
 
     assert matching_calls, (
-        f"{case.module_path}::{case.function} has no `{expected_reporter}` call "
+        f"{case.module_path}::{case.function} has no `{case.reporter}` call "
         f"with integration={case.integration!r} and method={case.method!r}"
     )
     # Each tagged (integration, method) pair should appear exactly once per function
@@ -412,12 +646,17 @@ def test_every_migrated_module_imports_the_helper() -> None:
     """Sanity guard: every file we touched imports its expected reporter(s)."""
     by_module: dict[str, set[str]] = {}
     for case in CASES:
-        by_module.setdefault(case.module_path, set()).add(_expected_reporter(case))
+        by_module.setdefault(case.module_path, set()).add(case.reporter)
 
     for module_path, expected_helpers in by_module.items():
         source = (_REPO_ROOT / module_path).read_text(encoding="utf-8")
-        for helper in expected_helpers:
-            assert helper in source, f"{module_path} migration is incomplete: missing {helper}"
+        tree = ast.parse(source)
+        imported_helpers = _imported_validation_helpers(tree)
+        missing = expected_helpers - imported_helpers
+        assert not missing, (
+            f"{module_path} migration is incomplete: missing imports from "
+            f"app.integrations._validation_helpers: {sorted(missing)!r}"
+        )
 
 
 def test_broad_except_handlers_skips_nested_handlers() -> None:
