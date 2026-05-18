@@ -23,3 +23,21 @@ class CLIAuthenticationRequired(RuntimeError):
         self.auth_hint = auth_hint
         self.detail = detail
         super().__init__(f"{provider} is not authenticated. {auth_hint} ({detail})")
+
+
+class CLITransientError(RuntimeError):
+    """CLI subprocess exited with a transient failure code (e.g. EX_TEMPFAIL = 75).
+
+    Treated as an expected operational failure (not a bug), so callers should
+    not forward it to error-tracking services like Sentry.
+    """
+
+
+class CLIInterruptedError(RuntimeError):
+    """CLI subprocess was terminated by SIGINT (exit code 130, Ctrl+C).
+
+    Inherits from :class:`RuntimeError` (not :class:`KeyboardInterrupt`) so that
+    callers wrapping ``invoke()`` in ``try/except Exception`` keep their existing
+    control flow contract. Sentry is configured to ignore this type via
+    ``ignore_errors`` so user initiated cancellations do not surface as bugs.
+    """

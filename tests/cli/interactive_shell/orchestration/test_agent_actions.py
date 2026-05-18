@@ -119,6 +119,72 @@ def test_execute_cli_actions_dispatches_planned_commands(monkeypatch: object) ->
     assert "ran /list integrations" in output
 
 
+def test_execute_cli_actions_skips_remaining_actions_when_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multi-action plan: if the user pressed Esc / typed ``/cancel``
+    between actions, the per-dispatch cancel event is set on the
+    ``_StreamingConsole``. The action loop checks ``cancel_requested``
+    at the top of each iteration and breaks, so the remaining actions
+    in the plan are NOT dispatched.
+
+    Pre-fix, the loop ran every action regardless of cancel state, so
+    cancelling a "do A then B" plan still ran B even after the user
+    explicitly asked to stop. This pins the new contract that an
+    in-flight cancel halts the plan after the current action.
+    """
+    dispatched: list[str] = []
+
+    class _CancelAfterFirst:
+        """Console-shaped object that returns ``cancel_requested=True``
+        only AFTER the first action has been dispatched, simulating
+        the user hitting Esc / typing ``/cancel`` between actions."""
+
+        def __init__(self, inner: Console, dispatched: list[str]) -> None:
+            self._inner = inner
+            self._dispatched = dispatched
+
+        @property
+        def cancel_requested(self) -> bool:
+            return len(self._dispatched) >= 1
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+    def _fake_dispatch(
+        command: str,
+        session: ReplSession,
+        console: Console,
+        **_kwargs: object,
+    ) -> bool:
+        dispatched.append(command)
+        session.record("slash", command, ok=True)
+        console.print(f"ran {command}")
+        return True
+
+    monkeypatch.setattr(agent_actions, "dispatch_slash", _fake_dispatch)  # type: ignore[attr-defined]
+
+    session = ReplSession()
+    inner_console, buf = _capture()
+    console = _CancelAfterFirst(inner_console, dispatched)
+    handled = agent_actions.execute_cli_actions(
+        "check the health of my opensre and then show me all connected services",
+        session,
+        console,  # type: ignore[arg-type]
+    )
+
+    assert handled is True
+    # Only the first action ran; the second was skipped because the
+    # cancel event was set between iterations.
+    assert dispatched == ["/health"], (
+        f"second action ran despite cancel between iterations: {dispatched}"
+    )
+    output = buf.getvalue()
+    assert "ran /health" in output
+    assert "ran /list integrations" not in output
+    assert "remaining actions cancelled" in output
+
+
 def test_execute_cli_actions_falls_through_for_local_llama_request(monkeypatch: object) -> None:
     dispatched: list[str] = []
 
@@ -274,11 +340,11 @@ def test_execute_cli_actions_answers_discord_then_dispatches_datadog(
 def test_compound_prompt_plans_chat_list_and_cli_command() -> None:
     message = (
         "tell me how you are doing AND show me all the services we are connected to "
-        "AND then run opensre deploy"
+        "AND then run opensre integrations list"
     )
 
     assert agent_actions.plan_terminal_tasks(message) == ["slash", "cli_command"]
-    assert agent_actions.plan_cli_actions(message) == ["/list integrations", "deploy"]
+    assert agent_actions.plan_cli_actions(message) == ["/list integrations", "integrations list"]
 
 
 def test_cli_command_requires_explicit_opensre_context() -> None:
@@ -289,8 +355,8 @@ def test_cli_command_requires_explicit_opensre_context() -> None:
 
 
 def test_cli_command_preserves_flags_after_explicit_opensre_prefix() -> None:
-    assert agent_actions.plan_cli_actions("please run opensre deploy --dry-run") == [
-        "deploy --dry-run"
+    assert agent_actions.plan_cli_actions("please run opensre integrations verify --dry-run") == [
+        "integrations verify --dry-run"
     ]
 
 
@@ -301,7 +367,7 @@ def test_compound_prompt_plans_chat_list_and_slash_deploy_paraphrase() -> None:
     )
 
     assert agent_actions.plan_terminal_tasks(message) == ["slash", "slash"]
-    assert agent_actions.plan_cli_actions(message) == ["/list integrations", "/deploy"]
+    assert agent_actions.plan_cli_actions(message) == ["/list integrations", "/remote"]
 
 
 def test_services_version_deploy_prompt_plans_all_actions() -> None:
@@ -311,7 +377,7 @@ def test_services_version_deploy_prompt_plans_all_actions() -> None:
     )
 
     assert agent_actions.plan_terminal_tasks(message) == ["slash", "slash", "slash"]
-    assert agent_actions.plan_cli_actions(message) == ["/list integrations", "/version", "/deploy"]
+    assert agent_actions.plan_cli_actions(message) == ["/list integrations", "/version", "/remote"]
 
 
 def test_explicit_shell_command_plans_shell_action() -> None:
@@ -373,7 +439,7 @@ def test_compound_prompt_executes_all_supported_tasks(monkeypatch: object) -> No
     )
 
     assert handled is False
-    assert dispatched == ["/list integrations", "/deploy"]
+    assert dispatched == ["/list integrations", "/remote"]
     output = buf.getvalue()
     assert "I'm doing fine" not in output
     assert "EC2 deployment creates AWS" not in output
@@ -408,7 +474,7 @@ def test_services_version_deploy_prompt_executes_in_order(monkeypatch: object) -
     )
 
     assert handled is True
-    assert dispatched == ["/list integrations", "/version", "/deploy"]
+    assert dispatched == ["/list integrations", "/version", "/remote"]
     output = buf.getvalue()
     assert output.index("ran /list integrations") < output.index("ran /version")
     assert "EC2 deployment creates AWS" not in output
@@ -795,6 +861,8 @@ def test_execute_cli_actions_records_shell_failure(monkeypatch: object) -> None:
                 "shell": False,
                 "capture_output": True,
                 "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
                 "timeout": action_executor.SHELL_COMMAND_TIMEOUT_SECONDS,
                 "check": False,
             },
@@ -854,6 +922,8 @@ def test_execute_cli_actions_runs_passthrough_with_shell_true(monkeypatch: objec
                 "executable": shell_execution.os.environ.get("SHELL") or None,
                 "capture_output": True,
                 "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
                 "timeout": action_executor.SHELL_COMMAND_TIMEOUT_SECONDS,
                 "check": False,
             },

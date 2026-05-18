@@ -5,7 +5,8 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from app.cli.__main__ import cli
-from app.integrations.cli import _HANDLERS, _setup_vercel
+from app.cli.support.constants import VERIFY_SERVICES
+from app.integrations.cli import _HANDLERS, _setup_openclaw, _setup_vercel
 
 
 def test_integrations_show_redacts_api_token() -> None:
@@ -67,6 +68,25 @@ def test_integrations_setup_accepts_vercel() -> None:
     mock_capture.assert_not_called()
 
 
+def test_integrations_setup_accepts_openclaw() -> None:
+    runner = CliRunner()
+
+    with (
+        patch("app.cli.commands.integrations.capture_integration_setup_started"),
+        patch("app.cli.commands.integrations.capture_integration_setup_completed"),
+        patch("app.cli.commands.integrations.capture_integration_verified") as mock_capture,
+        patch("app.integrations.cli.cmd_setup") as mock_setup,
+        patch("app.integrations.cli.cmd_verify", return_value=1) as mock_verify,
+    ):
+        mock_setup.return_value = "openclaw"
+        result = runner.invoke(cli, ["integrations", "setup", "openclaw"])
+
+    assert result.exit_code == 1
+    mock_setup.assert_called_once_with("openclaw")
+    mock_verify.assert_called_once_with("openclaw")
+    mock_capture.assert_not_called()
+
+
 def test_setup_vercel_saves_credentials(monkeypatch) -> None:
     answers = iter(["vcp_test_token", "team_123"])
 
@@ -87,6 +107,42 @@ def test_setup_vercel_saves_credentials(monkeypatch) -> None:
         (
             "vercel",
             {"credentials": {"api_token": "vcp_test_token", "team_id": "team_123"}},
+        )
+    ]
+
+
+def test_setup_openclaw_saves_credentials(monkeypatch) -> None:
+    answers = iter(["1", "openclaw", "mcp serve"])
+
+    def fake_p(_label: str, default: str = "", secret: bool = False) -> str:
+        return next(answers)
+
+    saved: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr("app.integrations.cli._p", fake_p)
+    monkeypatch.setattr(
+        "app.integrations.cli.upsert_integration",
+        lambda service, entry: saved.append((service, entry)),
+    )
+    monkeypatch.setattr(
+        "app.integrations.cli.validate_openclaw_config",
+        lambda _config: type("Result", (), {"ok": True, "detail": "ok"})(),
+    )
+
+    _setup_openclaw()
+
+    assert _HANDLERS["openclaw"] is _setup_openclaw
+    assert saved == [
+        (
+            "openclaw",
+            {
+                "credentials": {
+                    "mode": "stdio",
+                    "command": "openclaw",
+                    "args": ["mcp", "serve"],
+                    "url": "",
+                    "auth_token": "",
+                }
+            },
         )
     ]
 
@@ -162,3 +218,41 @@ def test_integrations_verify_accepts_argocd() -> None:
         send_slack_test=False,
     )
     mock_capture.assert_called_once_with("argocd")
+
+
+def test_integrations_verify_accepts_helm() -> None:
+    # Regression test for #1973: helm was registered in the runtime registry
+    # but rejected by Click because the CLI's hardcoded VERIFY_SERVICES tuple
+    # had drifted out of sync.
+    runner = CliRunner()
+
+    with (
+        patch("app.cli.commands.integrations.capture_integration_verified") as mock_capture,
+        patch("app.integrations.cli.cmd_verify", return_value=0) as mock_verify,
+    ):
+        result = runner.invoke(cli, ["integrations", "verify", "helm"])
+
+    assert result.exit_code == 0
+    mock_verify.assert_called_once_with(
+        "helm",
+        send_slack_test=False,
+    )
+    mock_capture.assert_called_once_with("helm")
+
+
+def test_verify_services_includes_previously_missing_integrations() -> None:
+    # #1973 surfaced these names as registered in the runtime registry but
+    # rejected by Click's positional-arg validator (the CLI's hardcoded
+    # VERIFY_SERVICES tuple had drifted). Anchor them here so a revert to a
+    # hardcoded tuple — or accidental removal from the registry — fails this
+    # test loudly.
+    previously_missing = {
+        "azure",
+        "azure_sql",
+        "helm",
+        "openobserve",
+        "snowflake",
+        "splunk",
+        "supabase",
+    }
+    assert previously_missing <= set(VERIFY_SERVICES)

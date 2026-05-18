@@ -183,13 +183,67 @@ def test_investigate_captures_unexpected_exception(monkeypatch: pytest.MonkeyPat
     assert captured_errors == [expected_error]
 
 
-@pytest.mark.asyncio
+def test_execute_investigation_tracks_remote_http_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    track_calls: list[tuple[str, str]] = []
+
+    class _TrackContext:
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            _ = (exc_type, exc, tb)
+            return False
+
+    def fake_track(*, entrypoint, trigger_mode, **kwargs):  # type: ignore[no-untyped-def]
+        _ = kwargs
+        track_calls.append((entrypoint.value, trigger_mode.value))
+        return _TrackContext()
+
+    monkeypatch.setattr("app.remote.server.track_investigation", fake_track)
+    monkeypatch.setattr(
+        "app.cli.investigation.resolve_investigation_context",
+        lambda **_kwargs: ("alert-name", "pipeline-name", "critical"),
+    )
+    cli_calls: list[dict[str, Any]] = []
+
+    def fake_run_investigation_cli(**kwargs: Any) -> dict[str, Any]:
+        cli_calls.append(kwargs)
+        return {"root_cause": "ok"}
+
+    monkeypatch.setattr(
+        "app.cli.investigation.run_investigation_cli",
+        fake_run_investigation_cli,
+    )
+
+    result, alert_name, pipeline_name, severity = remote_server._execute_investigation(
+        raw_alert={"description": "cpu spike"},
+        alert_name="Production CPU Spike",
+        pipeline_name=None,
+        severity=None,
+    )
+
+    assert result == {"root_cause": "ok"}
+    assert (alert_name, pipeline_name, severity) == ("alert-name", "pipeline-name", "critical")
+    assert track_calls == [("remote_http", "service_runtime")]
+    assert cli_calls == [
+        {
+            "raw_alert": {"description": "cpu spike"},
+            "investigation_metadata": ("alert-name", "pipeline-name", "critical"),
+        }
+    ]
+
+
+@pytest.mark.anyio
 async def test_investigate_stream_persists_state_on_disconnect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     persisted: dict[str, Any] = {}
+    astream_calls: list[dict[str, Any]] = []
 
     async def fake_astream_investigation(*args: object, **kwargs: object):
+        astream_calls.append(dict(kwargs))
         yield StreamEvent(
             "events",
             data={"data": {"output": {"root_cause": "Schema mismatch", "report": "Fix upstream"}}},
@@ -231,17 +285,24 @@ async def test_investigate_stream_persists_state_on_disconnect(
     assert persisted["severity"] == "critical"
     assert persisted["state"]["root_cause"] == "Schema mismatch"
     assert persisted["state"]["report"] == "Fix upstream"
+    assert len(astream_calls) == 1
+    call0 = astream_calls[0]
+    assert call0["investigation_metadata"] == ("test-alert", "etl_daily_orders", "critical")
+    assert call0["raw_alert"].get("alert_name") == "PayloadAlert"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_investigate_stream_captures_streaming_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured_errors: list[BaseException] = []
+    captured_failures: list[str] = []
     expected_error = RuntimeError("stream failed")
 
+    astream_calls: list[dict[str, Any]] = []
+
     async def fake_astream_investigation(*args: object, **kwargs: object):
-        _ = (args, kwargs)
+        astream_calls.append(dict(kwargs))
         raise expected_error
         yield StreamEvent("events", data={})
 
@@ -255,6 +316,14 @@ async def test_investigate_stream_captures_streaming_exception(
         fake_astream_investigation,
     )
     monkeypatch.setattr(remote_server, "capture_exception", captured_errors.append)
+    monkeypatch.setattr(
+        remote_server,
+        "capture_investigation_failed",
+        lambda *, tracker, failure_type=None: (
+            captured_failures.append(failure_type or ""),
+            tracker,
+        )[0],
+    )
     monkeypatch.setattr(remote_server, "_persist_streamed_result", lambda **_kwargs: None)
 
     response = await investigate_stream(
@@ -264,9 +333,17 @@ async def test_investigate_stream_captures_streaming_exception(
 
     assert any("event: error" in chunk for chunk in chunks)
     assert captured_errors == [expected_error]
+    assert captured_failures == ["RuntimeError"]
+    assert len(astream_calls) == 1
+    assert astream_calls[0]["investigation_metadata"] == (
+        "test-alert",
+        "etl_daily_orders",
+        "critical",
+    )
+    assert astream_calls[0]["raw_alert"].get("alert_name") == "PayloadAlert"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_lifespan_starts_and_cancels_vercel_poller(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -293,7 +370,7 @@ async def test_lifespan_starts_and_cancels_vercel_poller(
     assert cancelled.is_set()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_lifespan_raises_helpful_error_on_permission_denied(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -723,3 +800,110 @@ def test_check_memory_health_returns_missing_on_oserror(
     assert result.name == "Memory"
     assert result.status == "missing"
     assert "Unable to read meminfo:" in result.detail
+
+
+@pytest.mark.anyio
+async def test_investigate_stream_emits_correlation_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    persisted: dict[str, Any] = {}
+
+    def fake_investigation_run(
+        _self: object,
+        _state: object,
+        *,
+        on_event: object | None = None,
+    ) -> dict[str, str]:
+        _ = on_event
+        return {
+            "root_cause": "RDS CPU spike",
+            "report": "Correlation attached",
+        }
+
+    monkeypatch.setattr("app.config.LLMSettings.from_env", object)
+
+    monkeypatch.setattr(
+        "app.cli.investigation.resolve_investigation_context",
+        lambda **_kwargs: ("test-alert", "orders-pipeline", "critical"),
+    )
+
+    monkeypatch.setattr(
+        "app.agent.context.resolve_integrations",
+        lambda _state: {},
+    )
+
+    monkeypatch.setattr(
+        "app.agent.extract.extract_alert",
+        lambda _state: {
+            "raw_alert": {
+                "alert_name": "PayloadAlert",
+                "service": "orders",
+                "resource": "orders-rds-prod",
+            },
+            "alert_name": "PayloadAlert",
+            "pipeline_name": "orders",
+            "severity": "critical",
+            "incident_window": {
+                "since": "2026-04-15T14:00:00Z",
+                "until": "2026-04-15T14:15:00Z",
+            },
+        },
+    )
+
+    monkeypatch.setattr(
+        "app.agent.investigation.ConnectedInvestigationAgent.run",
+        fake_investigation_run,
+    )
+
+    monkeypatch.setattr(
+        "app.correlation.node.node_correlate_upstream",
+        lambda _state, _config=None: {
+            "correlation": {
+                "correlated_signals": [
+                    {
+                        "name": "upstream-correlation",
+                        "source": "runtime",
+                        "score": 0.9,
+                    }
+                ],
+                "most_likely_causal_drivers": [
+                    {
+                        "name": "system.cpu.user{service:orders-web}",
+                        "confidence": 0.9,
+                        "rationale": "time_window=1.0",
+                    }
+                ],
+            }
+        },
+    )
+
+    monkeypatch.setattr(
+        "app.delivery.publish_findings.node.generate_report",
+        lambda _state: {
+            "root_cause": "RDS CPU spike",
+            "report": "Correlation attached",
+        },
+    )
+
+    monkeypatch.setattr(
+        "app.remote.server._persist_streamed_result",
+        lambda **kwargs: persisted.update(kwargs),
+    )
+
+    response = await investigate_stream(
+        InvestigateRequest(raw_alert={"alert_name": "PayloadAlert"})
+    )
+
+    chunks = [chunk async for chunk in response.body_iterator]
+
+    assert chunks
+    assert any("correlate_upstream" in chunk for chunk in chunks)
+
+    correlation = persisted["state"]["correlation"]
+
+    assert correlation["correlated_signals"]
+    assert correlation["most_likely_causal_drivers"]
+    assert (
+        correlation["most_likely_causal_drivers"][0]["name"]
+        == "system.cpu.user{service:orders-web}"
+    )

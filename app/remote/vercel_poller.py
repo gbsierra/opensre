@@ -261,7 +261,8 @@ def parse_vercel_url(vercel_url: str) -> ParsedVercelUrl:
     parsed = urlparse(cleaned)
     if not cleaned:
         raise VercelResolutionError("Vercel URL is required.")
-    if "vercel.com" not in parsed.netloc.lower():
+    hostname = (parsed.hostname or "").lower()
+    if hostname != "vercel.com" and not hostname.endswith(".vercel.com"):
         raise VercelResolutionError(f"Unsupported Vercel URL host: {parsed.netloc or '<empty>'}")
 
     parts = [part for part in parsed.path.split("/") if part]
@@ -842,8 +843,11 @@ class VercelPoller:
             try:
                 candidates = await asyncio.to_thread(self.collect_candidates)
                 for candidate in candidates:
+                    was_processed = False
                     try:
                         was_processed = await handle_candidate(candidate)
+                    except asyncio.CancelledError:
+                        raise
                     except Exception as exc:
                         report_remote_exception(
                             exc,
@@ -857,7 +861,6 @@ class VercelPoller:
                             severity="error",
                             tags={"candidate_id": candidate.dedupe_key},
                         )
-                        was_processed = False
                     if was_processed:
                         await asyncio.to_thread(
                             self.state_store.mark_processed,

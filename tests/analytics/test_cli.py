@@ -4,6 +4,7 @@ import pytest
 
 from app.analytics import cli
 from app.analytics.events import Event
+from app.analytics.source import EntrypointSource, TriggerMode
 
 
 class _StubAnalytics:
@@ -164,3 +165,73 @@ def test_eval_and_terminal_kpi_queries_cover_core_metrics() -> None:
     assert expected_keys.issubset(cli.EVAL_AND_TERMINAL_KPI_QUERIES.keys())
     for query in cli.EVAL_AND_TERMINAL_KPI_QUERIES.values():
         assert "FROM events" in query
+
+
+def test_track_investigation_emits_lifecycle_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = _StubAnalytics()
+    monkeypatch.setattr(cli, "get_analytics", lambda: stub)
+
+    with cli.track_investigation(
+        entrypoint=EntrypointSource.CLI_COMMAND,
+        trigger_mode=TriggerMode.FILE,
+        input_path="alert.json",
+    ):
+        pass
+
+    emitted_events = [event for event, _ in stub.events]
+    assert emitted_events == [Event.INVESTIGATION_STARTED, Event.INVESTIGATION_COMPLETED]
+    started_props = stub.events[0][1] or {}
+    completed_props = stub.events[1][1] or {}
+    assert started_props["source"] == "test"
+    assert started_props["entrypoint_source"] == "cli_command"
+    assert started_props["category"] == "test"
+    assert started_props["trigger_mode"] == "file"
+    assert started_props["is_test"] is True
+    assert started_props["investigation_id"] == completed_props["investigation_id"]
+
+
+def test_track_investigation_emits_failed_on_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub = _StubAnalytics()
+    monkeypatch.setattr(cli, "get_analytics", lambda: stub)
+
+    # Wrap the raise in a callable so the ``raise`` lives inside ``_trigger``
+    # rather than directly in the test body. ``pytest.raises`` then sees a
+    # plain function call as its protected expression, which lets CodeQL
+    # ``py/unreachable-statement`` prove the assertions below are reachable
+    # (the previous nested-``with`` workaround still tripped the rule).
+    def _trigger() -> None:
+        with cli.track_investigation(
+            entrypoint=EntrypointSource.MCP,
+            trigger_mode=TriggerMode.SERVICE_RUNTIME,
+        ):
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        _trigger()
+
+    emitted_events = [event for event, _ in stub.events]
+    assert emitted_events == [Event.INVESTIGATION_STARTED, Event.INVESTIGATION_FAILED]
+    failed_props = stub.events[1][1] or {}
+    assert failed_props["failure_type"] == "RuntimeError"
+
+
+def test_track_investigation_nested_context_dedupes(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = _StubAnalytics()
+    monkeypatch.setattr(cli, "get_analytics", lambda: stub)
+
+    with (
+        cli.track_investigation(
+            entrypoint=EntrypointSource.SDK,
+            trigger_mode=TriggerMode.SERVICE_RUNTIME,
+        ),
+        cli.track_investigation(
+            entrypoint=EntrypointSource.CLI_COMMAND,
+            trigger_mode=TriggerMode.FILE,
+        ),
+    ):
+        pass
+
+    emitted_events = [event for event, _ in stub.events]
+    assert emitted_events == [Event.INVESTIGATION_STARTED, Event.INVESTIGATION_COMPLETED]

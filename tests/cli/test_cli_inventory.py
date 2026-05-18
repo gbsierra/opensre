@@ -9,7 +9,7 @@ from click.testing import CliRunner
 
 from app.cli.__main__ import cli
 from app.cli.tests.catalog import TestCatalogItem, TestRequirement
-from app.cli.tests.runner import format_command, run_catalog_items
+from app.cli.tests.runner import format_command, run_catalog_item, run_catalog_items
 
 
 def test_tests_list_filters_ci_safe_inventory() -> None:
@@ -90,6 +90,17 @@ def test_tests_list_category_rca_excludes_make_targets() -> None:
 
     assert result.exit_code == 0
     assert "make:test-cov" not in result.output
+    assert "openclaw-synthetic:gateway_process_terminated_missing_tls_key" in result.output
+
+
+def test_tests_list_category_openclaw_includes_fixture_and_synthetic() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["tests", "list", "--category", "openclaw"])
+
+    assert result.exit_code == 0
+    assert "rca:openclaw_gateway_crashed" in result.output
+    assert "openclaw-synthetic:gateway_process_terminated_missing_tls_key" in result.output
 
 
 def test_tests_list_search_no_match_returns_empty() -> None:
@@ -204,6 +215,27 @@ def test_format_command_renders_opensre_subcommand() -> None:
     assert "001-replication-lag" in format_command(item)
 
 
+def test_format_command_renders_openclaw_synthetic_subcommand() -> None:
+    item = TestCatalogItem(
+        id="openclaw-synthetic:gateway_process_terminated_missing_tls_key",
+        kind="cli_command",
+        display_name="OpenClaw synthetic scenario",
+        description="Synthetic OpenClaw scenario.",
+        command=(
+            "opensre",
+            "tests",
+            "openclaw-synthetic",
+            "--scenario",
+            "gateway_process_terminated_missing_tls_key",
+        ),
+        tags=("synthetic", "openclaw", "rca"),
+        requirements=TestRequirement(notes=("Configured LLM provider",)),
+    )
+
+    assert "openclaw-synthetic" in format_command(item)
+    assert "gateway_process_terminated_missing_tls_key" in format_command(item)
+
+
 # --- runner.run_catalog_items non-runnable skip ---
 
 
@@ -226,6 +258,31 @@ def test_run_catalog_items_skips_non_runnable_and_prints_message(
     captured = capsys.readouterr()
     assert "suite:empty" in captured.err
     assert "Skipping" in captured.err
+
+
+def test_run_catalog_item_prints_openclaw_preflight_before_execution(
+    monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    item = TestCatalogItem(
+        id="rca:openclaw_gateway_crashed",
+        kind="rca_file",
+        display_name="OpenClaw Gateway Crashed",
+        description="Run a bundled markdown RCA alert fixture.",
+        command=("python", "-c", "raise SystemExit(0)"),
+        tags=("rca", "fixture", "openclaw"),
+        requirements=TestRequirement(),
+    )
+
+    monkeypatch.setattr(
+        "app.cli.tests.runner.get_preflight_messages",
+        lambda _item: ("OpenClaw preflight: unavailable.",),
+    )
+
+    exit_code = run_catalog_item(item)
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "OpenClaw preflight: unavailable." in captured.err
 
 
 # ---------------------------------------------------------------------------
@@ -322,81 +379,3 @@ def test_tests_synthetic_unrelated_module_not_found_propagates(tmp_path: Path) -
     # The misleading "not bundled" message MUST NOT be shown — the user
     # needs to see the real missing-dep cause so they can fix it.
     assert "synthetic RDS PostgreSQL suite is not available" not in output
-
-
-# ---------------------------------------------------------------------------
-# Bundled-binary degradation for ``opensre deploy ec2`` (audit finding)
-#
-# Same class of bug as #1078: ``app/cli/commands/deploy.py:323,329`` import
-# from ``tests.deployment.ec2.infrastructure_sdk`` which is excluded from
-# PyInstaller bundles. Without a guard, ``opensre deploy ec2`` and
-# ``opensre deploy ec2 --down`` both crash with raw ModuleNotFoundError.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["deploy", "ec2"],
-        ["deploy", "ec2", "--down"],
-    ],
-)
-def test_deploy_ec2_clean_error_when_not_bundled(argv: list[str]) -> None:
-    runner = CliRunner()
-
-    real_import = __import__
-
-    def _fail_ec2_import(name: str, *args: object, **kwargs: object) -> object:
-        if name.startswith("tests.deployment.ec2"):
-            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
-        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
-
-    with unittest.mock.patch("builtins.__import__", side_effect=_fail_ec2_import):
-        result = runner.invoke(cli, argv)
-
-    output = result.output or ""
-    assert result.exit_code == 1, f"unexpected exit code {result.exit_code}; output={output!r}"
-    assert "EC2 deployment is not available" in output
-    assert "pip install -e ." in output
-    assert "ModuleNotFoundError" not in output
-    assert "Traceback" not in output
-
-
-@pytest.mark.parametrize(
-    ("argv", "patched_module"),
-    [
-        # Destroy path (--down): try/except wraps `destroy_remote` import.
-        (
-            ["deploy", "ec2", "--down"],
-            "tests.deployment.ec2.infrastructure_sdk.destroy_remote",
-        ),
-        # Deploy path (no --down): try/except wraps `deploy_remote` import,
-        # which has its own narrow-catch in deploy_ec2 — covered separately
-        # so a regression in either branch is caught independently.
-        (
-            ["deploy", "ec2"],
-            "tests.deployment.ec2.infrastructure_sdk.deploy_remote",
-        ),
-    ],
-)
-def test_deploy_ec2_unrelated_module_not_found_propagates(
-    argv: list[str], patched_module: str
-) -> None:
-    """Narrow-catch contract for EC2 deploy: an unrelated transitive
-    missing dep (e.g. ``boto3``) must surface as the real error, not the
-    "EC2 not bundled" suggestion. Both ``deploy ec2`` and ``deploy ec2 --down``
-    have their own try/except blocks — exercise both."""
-    runner = CliRunner()
-
-    real_import = __import__
-
-    def _fail_unrelated_import(name: str, *args: object, **kwargs: object) -> object:
-        if name == patched_module:
-            raise ModuleNotFoundError("No module named 'boto3'", name="boto3")
-        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
-
-    with unittest.mock.patch("builtins.__import__", side_effect=_fail_unrelated_import):
-        result = runner.invoke(cli, argv)
-
-    output = result.output or ""
-    assert "EC2 deployment is not available" not in output

@@ -53,6 +53,7 @@ nosetests.xml
 coverage.xml
 *.cover
 *.log
+!tests/synthetic/hermes/**/*.log
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -110,7 +111,6 @@ Temporary Items
 
 # Project specific
 output/
-.langgraph_api/
 .cloudopsbench-results/
 tests/benchmarks/cloudopsbench/benchmark/
 tests/benchmarks/cloudopsbench/.cache/
@@ -132,6 +132,10 @@ tests/test_case_upstream_downstream_pipeline/pipeline_code/api_ingester/bin/
 **/cdk.out/
 
 CLAUDE_PERSONAL.md
+
+# Local planning notes (not tracked)
+plans/
+
 tasks/
 app/memories
 .aider*
