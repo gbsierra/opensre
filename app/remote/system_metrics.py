@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any
 
 from app.remote.error_reporting import report_remote_exception
-from app.utils.sentry_sdk import report_silent
 
 logger = logging.getLogger(__name__)
 _REPORTED_METRIC_EVENTS: set[str] = set()
@@ -112,11 +111,18 @@ def _collect_cpu() -> dict[str, Any] | None:
 
 
 def _collect_memory() -> dict[str, Any] | None:
-    with report_silent("system_metrics.memory"):
+    try:
         if sys.platform == "linux":
             return _memory_linux()
         if sys.platform == "darwin":
             return _memory_darwin()
+    except Exception as exc:
+        _report_metric_failure(
+            exc,
+            event="memory_collection_failed",
+            message="Memory metrics collection failed",
+        )
+        return None
     return None
 
 
@@ -204,11 +210,18 @@ def _collect_disk() -> dict[str, Any] | None:
 
 
 def _collect_uptime() -> dict[str, Any] | None:
-    with report_silent("system_metrics.uptime"):
+    try:
         if sys.platform == "linux":
             return _uptime_linux()
         if sys.platform == "darwin":
             return _uptime_darwin()
+    except Exception as exc:
+        _report_metric_failure(
+            exc,
+            event="uptime_collection_failed",
+            message="Uptime metrics collection failed",
+        )
+        return None
     return None
 
 
@@ -271,7 +284,7 @@ def _collect_process() -> dict[str, Any] | None:
     if getrusage is None or rusage_self is None:
         return None
 
-    with report_silent("system_metrics.process"):
+    try:
         usage = getrusage(rusage_self)
         # maxrss is in kB on Linux, bytes on macOS
         rss_kb = usage.ru_maxrss if sys.platform == "linux" else usage.ru_maxrss // 1024
@@ -282,4 +295,10 @@ def _collect_process() -> dict[str, Any] | None:
             result["open_fds"] = len(list(fd_dir.iterdir()))
 
         return result
-    return None
+    except Exception as exc:
+        _report_metric_failure(
+            exc,
+            event="process_collection_failed",
+            message="Process metrics collection failed",
+        )
+        return None
