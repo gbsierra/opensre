@@ -488,7 +488,10 @@ def _run_parallel(
             for i, tc in enumerate(tool_calls):
                 submitted[pool.submit(_call, tc)] = i
             for fut in as_completed(submitted):
-                results[submitted[fut]] = fut.result()
+                try:
+                    results[submitted[fut]] = fut.result()
+                except BaseException as fut_exc:  # noqa: BLE001
+                    results[submitted[fut]] = {"error": str(fut_exc)}
     except RuntimeError as exc:
         # interpreter is shutting down; executor.__exit__ has already waited for submitted futures
         logger.warning("[_run_parallel] RuntimeError – falling back to sequential: %s", exc)
@@ -496,7 +499,7 @@ def _run_parallel(
             if results[i] is _UNSET and fut.done():
                 try:
                     results[i] = fut.result()
-                except Exception as fut_exc:
+                except BaseException as fut_exc:  # noqa: BLE001
                     results[i] = {"error": str(fut_exc)}
         for i, tc in enumerate(tool_calls):
             if results[i] is _UNSET:
